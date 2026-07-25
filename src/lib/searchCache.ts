@@ -23,6 +23,31 @@ export function isCacheFresh(createdAt: string, now: number): boolean {
   return now - created <= CACHE_TTL_MS
 }
 
+type MemoryEntry = { payload: ShortVideo[]; createdAt: number }
+
+/**
+ * Supabase 환경변수가 없을 때만 쓰는 프로세스 내 폴백.
+ * 프로세스가 죽으면 사라지고 인스턴스 간에 공유되지 않는다.
+ * 목적은 Supabase 설정 없이 개발할 때 같은 검색어 반복이 쿼터를 태우지 않게 하는 것뿐이다.
+ */
+const memoryCache = new Map<string, MemoryEntry>()
+
+/** 테스트 전용. 프로세스 내 폴백 캐시를 비운다. */
+export function clearMemoryCache(): void {
+  memoryCache.clear()
+}
+
+function readMemory(
+  key: string,
+  allowStale: boolean,
+  now: number,
+): ShortVideo[] | null {
+  const entry = memoryCache.get(key)
+  if (!entry) return null
+  if (!allowStale && now - entry.createdAt > CACHE_TTL_MS) return null
+  return entry.payload
+}
+
 /**
  * 캐시된 검색 결과를 읽는다.
  * allowStale 은 쿼터 초과 폴백용이다. 만료된 결과라도 빈 화면보다 낫다.
@@ -33,15 +58,16 @@ export async function readCache(
   options: { allowStale?: boolean; now?: number } = {},
 ): Promise<ShortVideo[] | null> {
   const client = getClient()
-  if (!client) return null
-
   const { allowStale = false, now = Date.now() } = options
+  const key = normalizeQuery(query)
+
+  if (!client) return readMemory(key, allowStale, now)
 
   try {
     const { data, error } = await client
       .from(TABLE)
       .select('payload, created_at')
-      .eq('query_key', normalizeQuery(query))
+      .eq('query_key', key)
       .maybeSingle()
 
     if (error || !data) return null
@@ -55,11 +81,16 @@ export async function readCache(
 /** 검색 결과를 캐시에 저장한다. 실패는 무시한다. */
 export async function writeCache(query: string, videos: ShortVideo[]): Promise<void> {
   const client = getClient()
-  if (!client) return
+  const key = normalizeQuery(query)
+
+  if (!client) {
+    memoryCache.set(key, { payload: videos, createdAt: Date.now() })
+    return
+  }
 
   try {
     await client.from(TABLE).upsert({
-      query_key: normalizeQuery(query),
+      query_key: key,
       payload: videos,
       created_at: new Date().toISOString(),
     })

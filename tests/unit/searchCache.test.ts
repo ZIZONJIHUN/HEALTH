@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CACHE_TTL_MS, isCacheFresh, readCache, writeCache } from '@/lib/searchCache'
+import { CACHE_TTL_MS, clearMemoryCache, isCacheFresh, readCache, writeCache } from '@/lib/searchCache'
 
 const NOW = new Date('2026-07-25T00:00:00.000Z').getTime()
 
@@ -35,6 +35,7 @@ describe('Supabase 환경변수가 없을 때', () => {
   beforeEach(() => {
     delete process.env.SUPABASE_URL
     delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    clearMemoryCache()
   })
 
   afterEach(() => {
@@ -42,11 +43,47 @@ describe('Supabase 환경변수가 없을 때', () => {
     if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
   })
 
-  it('읽기는 null을 반환한다', async () => {
+  it('쓰지 않은 검색어는 null을 반환한다', async () => {
     await expect(readCache('스쿼트')).resolves.toBeNull()
   })
 
   it('쓰기는 조용히 성공한다', async () => {
     await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+  })
+
+  it('쓴 결과를 메모리에서 다시 읽는다', async () => {
+    const videos = [
+      {
+        id: 'a',
+        title: '스쿼트 기본',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/a/hqdefault.jpg',
+        durationSeconds: 45,
+      },
+    ]
+
+    await writeCache('스쿼트', videos)
+
+    await expect(readCache('스쿼트')).resolves.toEqual(videos)
+  })
+
+  it('정규화된 검색어를 키로 쓴다', async () => {
+    await writeCache('  스쿼트  ', [])
+
+    await expect(readCache('스쿼트')).resolves.toEqual([])
+  })
+
+  it('TTL이 지난 메모리 항목은 null을 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { now: later })).resolves.toBeNull()
+  })
+
+  it('allowStale이면 TTL이 지난 메모리 항목도 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { allowStale: true, now: later })).resolves.toEqual([])
   })
 })

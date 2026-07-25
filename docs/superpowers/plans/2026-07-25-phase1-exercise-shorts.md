@@ -1271,13 +1271,238 @@ function readMemory(
 - [ ] **Step 4: 테스트가 통과하는지 확인**
 
 Run: `npm test`
-Expected: PASS — 43 tests passed (기존 39에서 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
+Expected: PASS — 52 tests passed (Task 4b 완료 후 48에서, 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
+
+> 실행 순서는 **Task 4b → 5b → 5c**다. 누적 테스트 개수는 48 → 52 → 55.
+> 순서를 바꾸면 각 태스크의 기대 개수도 달라진다.
 
 - [ ] **Step 5: 커밋**
 
 ```bash
 git add src/lib/searchCache.ts tests/unit/searchCache.test.ts
 git commit -m "feat: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백 추가"
+```
+
+---
+
+### Task 5c: 캐시 장애를 보이게 만들기
+
+**Files:**
+- Modify: `src/lib/searchCache.ts`
+- Modify: `tests/unit/searchCache.test.ts`
+- Create: `scripts/check-cache.ts`
+- Modify: `package.json` (`cache:check` 스크립트 추가)
+
+**Interfaces:**
+- 변경 없음: `readCache`·`writeCache`의 시그니처와 반환값 계약. 사용자에게 보이는 동작은 그대로다
+- Produces: `npm run cache:check` — 실제 Supabase에 왕복 검증
+
+**왜 필요한가**
+
+Task 5 리뷰가 지적한 것: `readCache`·`writeCache`의 성공 경로에 테스트가 없다.
+Supabase의 HTTP 와이어 포맷을 목으로 흉내내는 테스트는 "우리가 목을 올바르게 호출했다"만
+증명하고 "PostgREST가 이 요청을 받아들인다"는 증명하지 못한다. 그래서 목 테스트 대신
+두 가지로 막는다.
+
+진짜 위험은 **침묵**이다. 이 모듈은 모든 오류를 삼킨다. 컬럼명 오타나 마이그레이션 미실행으로
+캐시가 완전히 죽어도 앱은 정상 동작하고 쿼터만 태운다. 하루 약 99회면 소진되는데 원인을
+알 방법이 없다.
+
+1. **오류를 서버 로그로 남긴다.** 사용자에게 보이는 동작은 그대로 유지한다 — 여전히
+   `null`을 반환하고 예외를 던지지 않는다. 로그만 추가된다. 우아한 degrade는 유지하면서
+   장애가 발견 가능해진다.
+2. **`npm run cache:check`로 실제 왕복을 검증한다.** 목이 아니라 진짜 Supabase에 쓰고
+   읽어서 마이그레이션 실행 여부와 키 권한을 한 번에 확인한다. 셋업 직후 한 번 돌리면
+   된다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/searchCache.test.ts` 맨 아래에 추가한다. import에 `vi`를 포함한다.
+
+```ts
+describe('Supabase 호출이 실패할 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    // 도달할 수 없는 호스트를 가리켜 호출을 실패시킨다.
+    process.env.SUPABASE_URL = 'http://127.0.0.1:1'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    else delete process.env.SUPABASE_URL
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+    else delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    vi.restoreAllMocks()
+  })
+
+  it('읽기 실패는 null을 반환하고 예외를 던지지 않는다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  })
+
+  it('읽기 실패를 경고로 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await readCache('스쿼트')
+
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]?.[0])).toContain('search_cache')
+  })
+
+  it('쓰기 실패는 조용히 성공하고 경고를 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts`
+Expected: FAIL — "읽기 실패를 경고로 남긴다"가 `console.warn` 호출 0회로 실패한다
+
+- [ ] **Step 3: 경고 로그 추가**
+
+`src/lib/searchCache.ts`에 헬퍼를 추가한다.
+
+```ts
+/**
+ * 캐시 장애를 서버 로그로만 남긴다.
+ * 사용자에게 보이는 동작은 바꾸지 않는다 — 캐시는 성능 최적화이지 정확성 의존성이 아니다.
+ * 로그가 없으면 컬럼명 오타나 마이그레이션 미실행으로 캐시가 완전히 죽어도
+ * 앱은 정상 동작하는 것처럼 보이고 쿼터만 태운다.
+ */
+function warnCacheFailure(operation: string, cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  console.warn(`[search_cache] ${operation} 실패 — 캐시를 건너뜁니다: ${reason}`)
+}
+```
+
+`readCache`의 Supabase 경로를 수정한다. `error`가 있을 때와 예외가 났을 때 모두 로그를
+남긴다. **행이 없는 정상적인 캐시 미스(`!data`)는 로그를 남기지 않는다** — 그건 장애가
+아니라 흔한 일이다.
+
+```ts
+    const { data, error } = await client
+      .from(TABLE)
+      .select('payload, created_at')
+      .eq('query_key', key)
+      .maybeSingle()
+
+    if (error) {
+      warnCacheFailure('읽기', error.message)
+      return null
+    }
+    if (!data) return null
+    if (!allowStale && !isCacheFresh(data.created_at as string, now)) return null
+    return data.payload as ShortVideo[]
+  } catch (cause) {
+    warnCacheFailure('읽기', cause)
+    return null
+  }
+```
+
+`writeCache`도 같은 방식으로 수정한다. `upsert`의 반환값에서 `error`를 확인한다.
+
+```ts
+  try {
+    const { error } = await client.from(TABLE).upsert({
+      query_key: key,
+      payload: videos,
+      created_at: new Date().toISOString(),
+    })
+
+    if (error) warnCacheFailure('쓰기', error.message)
+  } catch (cause) {
+    warnCacheFailure('쓰기', cause)
+  }
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 55 tests passed (기존 52 + 3)
+
+출력에 `[search_cache]` 경고가 새는지 확인한다. 테스트가 `console.warn`을 목으로 막으므로
+출력은 깨끗해야 한다.
+
+- [ ] **Step 5: 왕복 검증 스크립트 작성**
+
+`scripts/check-cache.ts`:
+
+```ts
+import { readCache, writeCache } from '../src/lib/searchCache'
+
+/**
+ * 실제 Supabase에 쓰고 읽어서 캐시가 정말 동작하는지 확인한다.
+ * 마이그레이션 실행 여부, service_role 키 권한, 테이블·컬럼명을 한 번에 검증한다.
+ * 목 테스트로는 PostgREST가 요청을 받아들이는지 알 수 없어서 이 스크립트가 필요하다.
+ */
+async function main() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없습니다.')
+    console.log('캐시 없이도 앱은 동작합니다. 다만 같은 검색어도 매번 쿼터를 씁니다.')
+    return
+  }
+
+  const probeQuery = '__cache_check__'
+  const probe = [
+    {
+      id: 'probe',
+      title: '왕복 검증',
+      channelTitle: 'check',
+      thumbnailUrl: 'https://i.ytimg.com/vi/probe/hqdefault.jpg',
+      durationSeconds: 42,
+    },
+  ]
+
+  await writeCache(probeQuery, probe)
+  const readBack = await readCache(probeQuery)
+
+  if (!readBack) {
+    console.error('실패: 쓴 값을 다시 읽지 못했습니다.')
+    console.error('supabase/migrations/0001_search_cache.sql 을 실행했는지,')
+    console.error('SUPABASE_SERVICE_ROLE_KEY 가 anon 키가 아닌 service_role 키인지 확인하세요.')
+    console.error('위에 [search_cache] 경고가 있으면 그게 원인입니다.')
+    process.exitCode = 1
+    return
+  }
+
+  if (readBack[0]?.durationSeconds !== 42) {
+    console.error('실패: 읽은 값이 쓴 값과 다릅니다.', readBack)
+    process.exitCode = 1
+    return
+  }
+
+  console.log('성공: 캐시 쓰기와 읽기가 정상입니다.')
+}
+
+void main()
+```
+
+`package.json`의 `scripts`에 추가한다.
+
+```json
+"cache:check": "tsx --env-file=.env.local scripts/check-cache.ts"
+```
+
+`tsx`는 Task 1에서 이미 설치했다.
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add src/lib/searchCache.ts tests/unit/searchCache.test.ts scripts/check-cache.ts package.json
+git commit -m "feat: 캐시 장애를 서버 로그와 왕복 검증 스크립트로 드러냄
+
+모든 오류를 삼키는 설계라 컬럼명 오타나 마이그레이션 미실행으로 캐시가
+완전히 죽어도 앱은 정상 동작하는 것처럼 보이고 쿼터만 태운다.
+사용자에게 보이는 동작은 그대로 두고 서버 로그만 추가했다."
 ```
 
 ---

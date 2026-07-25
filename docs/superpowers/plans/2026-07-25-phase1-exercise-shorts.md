@@ -1271,13 +1271,170 @@ function readMemory(
 - [ ] **Step 4: 테스트가 통과하는지 확인**
 
 Run: `npm test`
-Expected: PASS — 44 tests passed (기존 39에서 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
+Expected: PASS — 43 tests passed (기존 39에서 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
 
 - [ ] **Step 5: 커밋**
 
 ```bash
 git add src/lib/searchCache.ts tests/unit/searchCache.test.ts
 git commit -m "feat: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백 추가"
+```
+
+---
+
+### Task 4b: 레이트리밋도 쿼터 소진으로 판별
+
+**Files:**
+- Modify: `src/lib/youtube.ts`
+- Modify: `tests/unit/youtube.test.ts`
+
+**Interfaces:**
+- Produces: `isQuotaFailure(status: number, body: string): boolean` — 순수 함수, 직접 테스트 가능
+- 변경 없음: `searchShorts`와 `QuotaExceededError`의 시그니처
+
+**왜 필요한가**
+
+Task 4의 `readJson`은 `response.status === 403 && body.includes('quotaExceeded')` 로만
+쿼터 소진을 판별한다. 그런데 Google은 같은 "요청을 줄여라" 상황을 두 가지 다른 방식으로도
+알린다.
+
+- 403 + `rateLimitExceeded` 또는 `userRateLimitExceeded` (초당·분당 요청 제한)
+- 429 (레이트리밋)
+
+이 둘은 현재 일반 `Error`로 던져진다. Task 6은 `QuotaExceededError`만 잡아 캐시 폴백으로
+전환하므로, 레이트리밋에 걸리면 우아한 degrade 대신 크래시 화면이 뜬다. 우아한 degrade를
+위해 만든 장치가 정작 가장 흔한 경우에 작동하지 않는다.
+
+배너 문구도 함께 고친다. "오늘 검색 한도에 도달했어요"는 일일 쿼터에는 맞지만 분당
+레이트리밋에는 틀린 설명이다. 두 경우 모두에 정확한 문구로 바꾼다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/youtube.test.ts`의 import에 `isQuotaFailure`를 추가하고, 기존
+`describe('searchShorts', ...)` 블록 **뒤에** 아래를 추가한다.
+
+```ts
+describe('isQuotaFailure', () => {
+  it('403 + quotaExceeded 는 쿼터 소진이다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"quotaExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + rateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + userRateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(
+      isQuotaFailure(403, '{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}'),
+    ).toBe(true)
+  })
+
+  it('429 는 본문과 무관하게 쿼터 소진이다', () => {
+    expect(isQuotaFailure(429, '')).toBe(true)
+  })
+
+  it('쿼터와 무관한 403 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"forbidden"}]}}')).toBe(false)
+  })
+
+  it('500 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(500, 'quotaExceeded')).toBe(false)
+  })
+})
+```
+
+그리고 `describe('searchShorts', ...)` 안에 아래 3개를 추가한다.
+
+```ts
+  it('403 rateLimitExceeded 면 QuotaExceededError를 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'rateLimitExceeded' }] } }, { status: 403 }),
+      ),
+    )
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('429 면 QuotaExceededError를 던진다', async () => {
+    server.use(http.get(SEARCH, () => HttpResponse.json({}, { status: 429 })))
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('쿼터와 무관한 403 은 일반 Error로 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'forbidden' }] } }, { status: 403 }),
+      ),
+    )
+
+    const promise = searchShorts('스쿼트', 'test-key')
+    await expect(promise).rejects.toThrow(/403/)
+    await expect(promise).rejects.not.toBeInstanceOf(QuotaExceededError)
+  })
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/youtube.test.ts`
+Expected: FAIL — `isQuotaFailure` is not exported. 그리고 rateLimitExceeded·429 테스트가
+`QuotaExceededError` 대신 일반 `Error`를 받아 실패한다.
+
+- [ ] **Step 3: 판별 로직 분리와 확장**
+
+`src/lib/youtube.ts`에서 `readJson`의 403 조건을 아래로 교체한다.
+
+```ts
+/** Google이 "요청을 줄여라"를 알리는 세 가지 이유. */
+const QUOTA_REASONS = ['quotaExceeded', 'rateLimitExceeded', 'userRateLimitExceeded']
+
+/**
+ * 쿼터·레이트리밋 소진인지 판별한다.
+ * Task 6은 이 신호만 잡아 캐시 폴백으로 전환하고 나머지 오류는 실제 실패로 흘린다.
+ * 429는 본문을 보지 않는다 — 429 자체가 레이트리밋이다.
+ */
+export function isQuotaFailure(status: number, body: string): boolean {
+  if (status === 429) return true
+  if (status !== 403) return false
+  return QUOTA_REASONS.some((reason) => body.includes(reason))
+}
+
+async function readJson<T>(response: Response, label: string): Promise<T> {
+  if (response.ok) return (await response.json()) as T
+
+  const body = await response.text()
+  if (isQuotaFailure(response.status, body)) {
+    throw new QuotaExceededError()
+  }
+  throw new Error(`YouTube ${label} 호출 실패: ${response.status} ${body}`)
+}
+```
+
+`QuotaExceededError`의 메시지도 레이트리밋을 포함하도록 바꾼다.
+
+```ts
+export class QuotaExceededError extends Error {
+  constructor() {
+    super('YouTube API quota or rate limit exceeded')
+    this.name = 'QuotaExceededError'
+  }
+}
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 52 tests passed (기존 43 + `isQuotaFailure` 6개 + `searchShorts` 3개)
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/youtube.ts tests/unit/youtube.test.ts
+git commit -m "fix: 레이트리밋(403 rateLimitExceeded, 429)도 쿼터 소진으로 판별
+
+Task 6은 QuotaExceededError만 잡아 캐시 폴백으로 전환한다.
+레이트리밋이 일반 Error로 던져지면 우아한 degrade 대신 크래시 화면이 뜬다."
 ```
 
 ---
@@ -1665,7 +1822,7 @@ export default function QuotaBanner() {
       data-testid="quota-banner"
       className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-text"
     >
-      오늘 검색 한도에 도달했어요. 이미 찾아둔 운동은 계속 볼 수 있습니다.
+      검색 한도에 걸렸어요. 이미 찾아둔 운동은 계속 볼 수 있습니다.
     </p>
   )
 }

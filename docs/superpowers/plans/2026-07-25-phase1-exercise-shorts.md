@@ -1290,6 +1290,8 @@ git commit -m "feat: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴
 **Files:**
 - Modify: `src/lib/searchCache.ts`
 - Modify: `tests/unit/searchCache.test.ts`
+- Create: `tests/setup.ts`
+- Modify: `vitest.config.ts` (`setupFiles` 추가)
 - Create: `scripts/check-cache.ts`
 - Modify: `package.json` (`cache:check` 스크립트 추가)
 
@@ -1432,7 +1434,46 @@ Expected: PASS — 55 tests passed (기존 52 + 3)
 출력에 `[search_cache]` 경고가 새는지 확인한다. 테스트가 `console.warn`을 목으로 막으므로
 출력은 깨끗해야 한다.
 
-- [ ] **Step 5: 왕복 검증 스크립트 작성**
+- [ ] **Step 5: 메모리 캐시 전역 정리 훅 추가**
+
+Task 5b가 `searchCache`를 모듈 수준 `Map`을 든 상태 있는 모듈로 만들었다. 지금은
+파일마다 `clearMemoryCache()`를 잊지 않고 부르는 규율에 의존한다. Vitest의 파일 격리
+기본값 덕에 현재는 새지 않지만, 그건 우연한 완화이지 이 코드가 만든 보장이 아니다.
+훅을 빠뜨리면 테스트가 **실패하지 않고 조용히 무의미해진다** — 캐시 히트를 받아
+검증하려던 경로를 아예 타지 않는다.
+
+`tests/setup.ts`:
+
+```ts
+import { afterEach } from 'vitest'
+import { clearMemoryCache } from '@/lib/searchCache'
+
+/**
+ * searchCache 는 모듈 수준 Map 을 들고 있다.
+ * 파일마다 비우는 것을 기억하는 대신 전역으로 비운다.
+ * 빠뜨리면 테스트가 실패하지 않고 조용히 캐시 히트를 받아 무의미해진다.
+ */
+afterEach(() => {
+  clearMemoryCache()
+})
+```
+
+`vitest.config.ts`의 `test` 블록에 한 줄 추가한다. 나머지는 건드리지 않는다.
+
+```ts
+    setupFiles: ['./tests/setup.ts'],
+```
+
+기존 테스트 파일의 `clearMemoryCache()` 호출은 그대로 둔다. 중복이지만 그 파일만 읽는
+사람에게 의도를 보여준다.
+
+- [ ] **Step 6: 전역 훅이 동작하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 55 tests passed. 개수는 Step 4와 같다. 이 단계는 새 테스트를 더하지
+않고 기존 테스트가 서로를 오염시키지 않게 보장한다.
+
+- [ ] **Step 7: 왕복 검증 스크립트 작성**
 
 `scripts/check-cache.ts`:
 
@@ -1494,10 +1535,10 @@ void main()
 
 `tsx`는 Task 1에서 이미 설치했다.
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 8: 커밋**
 
 ```bash
-git add src/lib/searchCache.ts tests/unit/searchCache.test.ts scripts/check-cache.ts package.json
+git add src/lib/searchCache.ts tests/unit/searchCache.test.ts tests/setup.ts vitest.config.ts scripts/check-cache.ts package.json
 git commit -m "feat: 캐시 장애를 서버 로그와 왕복 검증 스크립트로 드러냄
 
 모든 오류를 삼키는 설계라 컬럼명 오타나 마이그레이션 미실행으로 캐시가

@@ -23,6 +23,12 @@
 - 부위별 카테고리는 가슴, 등, 어깨, 하체, 팔, 코어, 전신 7개.
 - 캐시 장애는 검색을 실패시키지 않는다. Supabase 환경변수가 없거나 호출이 실패하면 캐시를 조용히 건너뛴다.
 - 모든 테스트는 실제 YouTube 쿼터를 소모하지 않는다.
+- 설치된 버전은 **Next.js 16.2.11 / React 19.2.4 / Tailwind v4**다. 번들 문서(`node_modules/next/dist/docs/`)로 확인한 사항:
+  - `searchParams`는 Promise이므로 `await`한다. Next 16은 동기 접근을 완전히 제거했다.
+  - `next.config.ts`에 **`cacheComponents`를 켜지 않는다.** 켜면 동적 API가 `<Suspense>` 밖에서 빌드 오류를 낸다. 이 앱은 Next 캐시가 아닌 자체 Supabase 캐시에 의존한다.
+  - `fetch`는 기본적으로 캐시되지 않고 한 렌더 안에서만 중복 제거된다. YouTube 응답에 `cache` 옵션을 붙이지 않는다.
+  - `next lint`는 제거됐다. `npm run lint`를 쓴다.
+  - `next.config.ts`에 커스텀 `webpack()` 설정을 넣지 않는다. Turbopack이 기본이라 빌드가 실패한다.
 
 ---
 
@@ -1503,12 +1509,23 @@ export default function QuotaBanner() {
 
 `getVideos`가 쿼터 외의 이유로 실패하면 예외가 서버 컴포넌트를 통과한다. 라우트 그룹에 에러 경계를 둬서 앱 전체가 죽는 대신 재시도 버튼을 보여준다.
 
+**`reset`이 아니라 `unstable_retry`를 쓴다.** Next 16.2에서 `reset()`은 에러 경계 상태만 지우고 서버 데이터를 다시 가져오지 않는다. 네트워크 실패에서 회복하려면 재요청이 일어나야 하므로 `reset()`으로는 버튼이 제 일을 못 한다. 번들 문서(`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/error.md`)가 `unstable_retry()`를 권장한다.
+
 `src/app/(tabs)/error.tsx`:
 
 ```tsx
 'use client'
 
-export default function TabsError({ reset }: { error: Error; reset: () => void }) {
+/**
+ * reset() 은 에러 상태만 지우고 서버 데이터를 재요청하지 않는다.
+ * 네트워크 실패 회복에는 재요청이 필요하므로 unstable_retry() 를 쓴다.
+ */
+export default function TabsError({
+  unstable_retry,
+}: {
+  error: Error & { digest?: string }
+  unstable_retry: () => void
+}) {
   return (
     <div
       data-testid="error-state"
@@ -1518,7 +1535,7 @@ export default function TabsError({ reset }: { error: Error; reset: () => void }
       <p className="mt-1 text-xs text-muted">네트워크를 확인한 뒤 다시 시도해 주세요.</p>
       <button
         type="button"
-        onClick={reset}
+        onClick={() => unstable_retry()}
         className="mt-4 h-10 rounded-xl bg-accent px-5 text-sm font-semibold text-bg"
       >
         다시 시도
@@ -2094,8 +2111,10 @@ npm test
 npm run test:e2e
 npm run build
 npx tsc --noEmit
-npx next lint
+npm run lint
 ```
+
+`next lint`는 Next 16에서 제거됐다. `create-next-app`이 만든 `lint` 스크립트(ESLint 직접 호출)를 쓴다.
 
 Expected: 모두 통과
 

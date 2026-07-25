@@ -1116,6 +1116,172 @@ git commit -m "feat: Supabase 검색 캐시 추가 (7일 TTL, 장애 시 무해�
 
 ---
 
+### Task 5b: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백
+
+**Files:**
+- Modify: `src/lib/searchCache.ts`
+- Modify: `tests/unit/searchCache.test.ts`
+
+**Interfaces:**
+- Consumes: Task 5의 `CACHE_TTL_MS`, `isCacheFresh`, `readCache`, `writeCache`, `normalizeQuery`
+- Produces: `clearMemoryCache(): void` — 테스트 전용. 프로세스 내 캐시를 비운다.
+- 변경 없음: `readCache`·`writeCache`의 시그니처와 외부 동작 계약은 그대로다
+
+**왜 필요한가**
+
+Supabase 환경변수가 없으면 Task 5의 캐시는 완전한 no-op이다. 앱은 정상 동작하지만
+같은 검색어를 반복해도 매번 쿼터 101 units를 쓴다. 일일 무료 한도 10,000이면
+하루 약 99회가 전부여서 개발 중 반나절에 소진된다.
+
+프로세스 내 `Map`을 폴백으로 두면 Supabase를 설정하지 않은 상태에서도 같은 세션의
+반복 검색이 무료가 된다. 프로세스가 죽으면 사라지고 Vercel 인스턴스 간에 공유되지도
+않지만, 그건 Supabase를 설정하면 해결되는 문제다. 이 폴백의 목적은 **Supabase 없이
+개발을 시작할 수 있게 하는 것**뿐이다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/searchCache.test.ts`의 기존 `describe('Supabase 환경변수가 없을 때', ...)`
+블록을 아래로 교체한다. `clearMemoryCache`를 import에 추가한다.
+
+```ts
+describe('Supabase 환경변수가 없을 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+  })
+
+  it('쓰지 않은 검색어는 null을 반환한다', async () => {
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  })
+
+  it('쓰기는 조용히 성공한다', async () => {
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+  })
+
+  it('쓴 결과를 메모리에서 다시 읽는다', async () => {
+    const videos = [
+      {
+        id: 'a',
+        title: '스쿼트 기본',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/a/hqdefault.jpg',
+        durationSeconds: 45,
+      },
+    ]
+
+    await writeCache('스쿼트', videos)
+
+    await expect(readCache('스쿼트')).resolves.toEqual(videos)
+  })
+
+  it('정규화된 검색어를 키로 쓴다', async () => {
+    await writeCache('  스쿼트  ', [])
+
+    await expect(readCache('스쿼트')).resolves.toEqual([])
+  })
+
+  it('TTL이 지난 메모리 항목은 null을 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { now: later })).resolves.toBeNull()
+  })
+
+  it('allowStale이면 TTL이 지난 메모리 항목도 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { allowStale: true, now: later })).resolves.toEqual([])
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts`
+Expected: FAIL — `clearMemoryCache` is not exported, 그리고 "쓴 결과를 메모리에서 다시 읽는다"가
+`null`을 받아 실패한다
+
+- [ ] **Step 3: 메모리 폴백 구현**
+
+`src/lib/searchCache.ts`에 추가하고 `readCache`·`writeCache`를 수정한다.
+`getClient()`, `isCacheFresh`, `CACHE_TTL_MS`는 건드리지 않는다.
+
+```ts
+type MemoryEntry = { payload: ShortVideo[]; createdAt: number }
+
+/**
+ * Supabase 환경변수가 없을 때만 쓰는 프로세스 내 폴백.
+ * 프로세스가 죽으면 사라지고 인스턴스 간에 공유되지 않는다.
+ * 목적은 Supabase 설정 없이 개발할 때 같은 검색어 반복이 쿼터를 태우지 않게 하는 것뿐이다.
+ */
+const memoryCache = new Map<string, MemoryEntry>()
+
+/** 테스트 전용. 프로세스 내 폴백 캐시를 비운다. */
+export function clearMemoryCache(): void {
+  memoryCache.clear()
+}
+
+function readMemory(
+  key: string,
+  allowStale: boolean,
+  now: number,
+): ShortVideo[] | null {
+  const entry = memoryCache.get(key)
+  if (!entry) return null
+  if (!allowStale && now - entry.createdAt > CACHE_TTL_MS) return null
+  return entry.payload
+}
+```
+
+`readCache`의 `if (!client) return null` 을 아래로 바꾼다.
+
+```ts
+  const { allowStale = false, now = Date.now() } = options
+  const key = normalizeQuery(query)
+
+  if (!client) return readMemory(key, allowStale, now)
+```
+
+이후 본문에서 `normalizeQuery(query)` 대신 `key`를 쓴다.
+
+`writeCache`의 `if (!client) return` 을 아래로 바꾼다.
+
+```ts
+  const key = normalizeQuery(query)
+
+  if (!client) {
+    memoryCache.set(key, { payload: videos, createdAt: Date.now() })
+    return
+  }
+```
+
+이후 본문에서 `normalizeQuery(query)` 대신 `key`를 쓴다.
+
+`ShortVideo` import가 이미 있는지 확인한다.
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 44 tests passed (기존 39에서 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/searchCache.ts tests/unit/searchCache.test.ts
+git commit -m "feat: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백 추가"
+```
+
+---
+
 ### Task 6: 검색 오케스트레이션과 API 라우트
 
 **Files:**

@@ -1683,6 +1683,7 @@ Task 6은 QuotaExceededError만 잡아 캐시 폴백으로 전환한다.
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { clearMemoryCache } from '@/lib/searchCache'
 import { getVideos } from '@/lib/videoSearch'
 
 const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
@@ -1696,9 +1697,13 @@ afterAll(() => server.close())
 
 beforeEach(() => {
   process.env.YOUTUBE_API_KEY = 'test-key'
-  // 캐시를 끈 상태로 순수 조회 경로를 검증한다.
+  // Supabase를 끊어 순수 조회 경로를 검증한다.
   delete process.env.SUPABASE_URL
   delete process.env.SUPABASE_SERVICE_ROLE_KEY
+  // Supabase가 없으면 Task 5b의 메모리 폴백이 동작한다.
+  // 비우지 않으면 앞 테스트가 채운 항목을 뒤 테스트가 캐시 히트로 받아
+  // YouTube 호출이 일어나지 않고, 쿼터·오류·키 누락 테스트가 모두 무의미해진다.
+  clearMemoryCache()
 })
 
 function mockYouTube(items: Array<{ id: string; duration: string }>) {

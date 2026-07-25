@@ -1,0 +1,2150 @@
+# 단계 1: 운동 쇼츠 검색과 재생 구현 계획
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 운동 이름을 검색하면 YouTube 쇼츠 썸네일 그리드가 나오고, 썸네일을 탭하면 전체화면 세로 스와이프 피드에서 연속 재생되는 웹 앱을 배포 가능한 상태로 만든다.
+
+**Architecture:** Next.js App Router의 서버 컴포넌트가 `getVideos(query)`를 직접 호출한다. `getVideos`는 Supabase 캐시를 먼저 확인하고, 없으면 YouTube Data API를 2단계로 호출해(검색 → 길이 확인) 180초 이하만 남긴 뒤 캐시에 저장한다. YouTube API 키는 서버 모듈에서만 읽는다. 순수 로직(길이 파서, 쇼츠 필터, 검색어 정규화, 임베드 URL)은 별도 파일로 분리해 단위 테스트하고, 네트워크가 붙는 계층은 MSW로, 화면 흐름은 Playwright로 검증한다.
+
+**Tech Stack:** Next.js (App Router) 15+, React 19, TypeScript, Tailwind CSS v4, Supabase JS v2, Vitest 3+, MSW 2+, Playwright
+
+## Global Constraints
+
+- 다크 전용. 라이트모드 토글을 만들지 않는다.
+- 팔레트 (Tailwind 테마 토큰으로 등록): 배경 `#0B0D10`, 카드 `#14171C`, 카드2 `#1C2027`, 경계 `#262B33`, 본문 `#E8EBF0`, 보조 `#8A929E`, 강조 `#C8FF3D`, 경고 `#FF5A5F`
+- `YOUTUBE_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`는 서버 모듈에서만 읽는다. `'use client'` 파일이나 `NEXT_PUBLIC_` 접두사에 절대 넣지 않는다.
+- 쇼츠 판정: 실제 길이 **180초 이하**, 그리고 0초 초과 (0초는 라이브 스트림)
+- `search.list` 파라미터: `type=video`, `videoDuration=short`, `videoEmbeddable=true`, `regionCode=KR`, `relevanceLanguage=ko`, `maxResults=25`
+- iframe 파라미터: `autoplay=1`, `mute=1`, `loop=1`, `playlist=<videoId>`, `playsinline=1`, `rel=0`, `modestbranding=1`
+- 캐시 TTL: 7일. 검색어 정규화: 앞뒤 공백 제거 → 소문자화 → 연속 공백 1칸
+- 피드 라우트는 `/feed?q=<검색어>&i=<인덱스>`. 탭바를 렌더하지 않는다.
+- 피드는 현재 슬라이드와 앞뒤 1개만 iframe을 마운트한다. 나머지는 썸네일.
+- 단계 1에서는 탭바에 **운동 탭만** 노출한다.
+- 부위별 카테고리는 가슴, 등, 어깨, 하체, 팔, 코어, 전신 7개.
+- 캐시 장애는 검색을 실패시키지 않는다. Supabase 환경변수가 없거나 호출이 실패하면 캐시를 조용히 건너뛴다.
+- 모든 테스트는 실제 YouTube 쿼터를 소모하지 않는다.
+
+---
+
+## 파일 구조
+
+| 파일 | 책임 |
+|---|---|
+| `src/lib/types.ts` | `ShortVideo`, `VideoSearchResult` 타입 |
+| `src/lib/duration.ts` | ISO8601 길이 파싱, `M:SS` 포맷 (순수) |
+| `src/lib/shorts.ts` | 쇼츠 길이 필터 (순수) |
+| `src/lib/cacheKey.ts` | 검색어 정규화 (순수) |
+| `src/lib/embed.ts` | YouTube 임베드 URL 생성 (순수) |
+| `src/lib/youtube.ts` | YouTube Data API 2단계 호출, 쿼터 오류 판별 |
+| `src/lib/searchCache.ts` | Supabase 캐시 읽기/쓰기, TTL 판정 |
+| `src/lib/videoSearch.ts` | 캐시 → API → 캐시 저장 → 쿼터 폴백 오케스트레이션 |
+| `src/data/categories.ts` | 부위별 카테고리, 인기 운동 20개 |
+| `src/app/layout.tsx` | `html`/`body`, 전역 스타일 |
+| `src/app/(tabs)/layout.tsx` | 탭이 있는 화면의 셸 + 하단 탭바 |
+| `src/app/(tabs)/page.tsx` | 운동 탭. 검색·카테고리·그리드 |
+| `src/app/feed/page.tsx` | 전면 스와이프 피드 (탭바 없음) |
+| `src/app/api/videos/route.ts` | `getVideos`의 JSON 래퍼 |
+| `src/components/BottomTabBar.tsx` | 하단 탭바 |
+| `src/components/SearchBar.tsx` | GET 폼 검색창 |
+| `src/components/CategoryChips.tsx` | 부위별 카테고리 칩 |
+| `src/components/VideoGrid.tsx` | 썸네일 2열 그리드 + 카드 |
+| `src/components/EmptyState.tsx` | 결과 0개 안내 + 추천 검색어 |
+| `src/components/QuotaBanner.tsx` | 쿼터 초과 배너 |
+| `src/components/ShortsFeed.tsx` | scroll-snap 컨테이너, 마운트 윈도우 관리 |
+| `src/components/FeedSlide.tsx` | 슬라이드 1개. iframe 또는 썸네일 |
+| `src/components/BackButton.tsx` | `router.back()` 버튼 |
+| `supabase/migrations/0001_search_cache.sql` | `search_cache` 테이블 |
+| `scripts/seed-cache.ts` | 인기 운동 20개 캐시 시드 |
+
+**서버 전용 모듈:** `youtube.ts`, `searchCache.ts`, `videoSearch.ts`. `'use client'` 파일에서 절대 import하지 않는다.
+
+---
+
+### Task 1: 프로젝트 셋업과 다크 셸
+
+**Files:**
+- Create: 프로젝트 전체 (`create-next-app`)
+- Create: `src/app/globals.css`
+- Create: `src/app/layout.tsx`
+- Create: `src/app/(tabs)/layout.tsx`
+- Create: `src/app/(tabs)/page.tsx`
+- Create: `src/components/BottomTabBar.tsx`
+- Create: `vitest.config.ts`
+- Create: `.env.local.example`
+- Create: `next.config.ts`
+- Delete: `create-next-app`이 만든 `src/app/page.tsx` (라우트 그룹으로 이동)
+
+**Interfaces:**
+- Consumes: 없음 (첫 태스크)
+- Produces: `@/*` → `src/*` 경로 별칭, Tailwind 색 토큰 (`bg-bg`, `bg-surface`, `bg-surface2`, `border-border`, `text-text`, `text-muted`, `text-accent`, `bg-accent`, `text-danger`), `npm test` = Vitest, `next.config.ts`의 `i.ytimg.com` 이미지 허용
+
+- [ ] **Step 1: Next.js 프로젝트 생성**
+
+현재 디렉터리에 이미 `.git`, `docs/`, `.gitignore`가 있으므로 **현재 디렉터리에** 생성한다.
+
+```bash
+npx create-next-app@latest . --typescript --tailwind --app --src-dir --eslint --no-turbopack --use-npm
+```
+
+프롬프트가 나오면 기존 파일 덮어쓰기를 허용한다. `.gitignore`가 덮어써지면 `node_modules/`, `.next/`, `.env*.local`, `.vercel`이 들어있는지 확인한다.
+
+- [ ] **Step 2: 테스트 도구 설치**
+
+```bash
+npm install --save-dev vitest msw @playwright/test tsx
+npm install @supabase/supabase-js
+npx playwright install chromium
+```
+
+- [ ] **Step 3: Vitest 설정 파일 작성**
+
+`vitest.config.ts`:
+
+```ts
+import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['tests/unit/**/*.test.ts'],
+  },
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+})
+```
+
+`package.json`의 `scripts`에 추가:
+
+```json
+"test": "vitest run",
+"test:watch": "vitest",
+"test:e2e": "playwright test"
+```
+
+- [ ] **Step 4: 다크 팔레트를 Tailwind 테마 토큰으로 등록**
+
+`src/app/globals.css` 전체를 교체:
+
+```css
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0B0D10;
+  --color-surface: #14171C;
+  --color-surface2: #1C2027;
+  --color-border: #262B33;
+  --color-text: #E8EBF0;
+  --color-muted: #8A929E;
+  --color-accent: #C8FF3D;
+  --color-danger: #FF5A5F;
+}
+
+html {
+  color-scheme: dark;
+}
+```
+
+- [ ] **Step 5: 이미지 호스트 허용**
+
+`next.config.ts`:
+
+```ts
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: 'i.ytimg.com' }],
+  },
+}
+
+export default nextConfig
+```
+
+- [ ] **Step 6: 루트 레이아웃 작성**
+
+`src/app/layout.tsx` 전체를 교체:
+
+```tsx
+import type { Metadata, Viewport } from 'next'
+import './globals.css'
+
+export const metadata: Metadata = {
+  title: '헬스 쇼츠',
+  description: '운동 이름으로 쇼츠를 찾아 바로 재생하세요',
+}
+
+export const viewport: Viewport = {
+  themeColor: '#0B0D10',
+  width: 'device-width',
+  initialScale: 1,
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ko">
+      <body className="min-h-dvh bg-bg text-text antialiased">{children}</body>
+    </html>
+  )
+}
+```
+
+- [ ] **Step 7: 하단 탭바 작성**
+
+`src/components/BottomTabBar.tsx`:
+
+```tsx
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+
+const TABS = [{ href: '/', label: '운동' }] as const
+
+export default function BottomTabBar() {
+  const pathname = usePathname()
+
+  return (
+    <nav aria-label="주요 메뉴" className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface">
+      <ul className="mx-auto flex max-w-md">
+        {TABS.map((tab) => {
+          const active = pathname === tab.href
+          return (
+            <li key={tab.href} className="flex-1">
+              <Link
+                href={tab.href}
+                aria-current={active ? 'page' : undefined}
+                className={`flex h-16 items-center justify-center text-xs font-medium ${
+                  active ? 'text-accent' : 'text-muted'
+                }`}
+              >
+                {tab.label}
+              </Link>
+            </li>
+          )
+        })}
+      </ul>
+    </nav>
+  )
+}
+```
+
+- [ ] **Step 8: 탭 그룹 레이아웃과 임시 홈 작성**
+
+`create-next-app`이 만든 `src/app/page.tsx`를 삭제한다.
+
+```bash
+rm src/app/page.tsx
+```
+
+`src/app/(tabs)/layout.tsx`:
+
+```tsx
+import BottomTabBar from '@/components/BottomTabBar'
+
+export default function TabsLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <div className="mx-auto max-w-md px-4 pb-24 pt-6">{children}</div>
+      <BottomTabBar />
+    </>
+  )
+}
+```
+
+`src/app/(tabs)/page.tsx` (Task 7에서 완성):
+
+```tsx
+export default function ExercisePage() {
+  return <h1 className="text-xl font-bold">운동</h1>
+}
+```
+
+- [ ] **Step 9: 환경변수 예시 파일 작성**
+
+`.env.local.example`:
+
+```
+# YouTube Data API v3 키. 서버에서만 사용된다.
+YOUTUBE_API_KEY=
+
+# 테스트에서 모의 서버를 가리키기 위한 용도. 비워두면 공식 엔드포인트를 쓴다.
+YOUTUBE_API_BASE=
+
+# Supabase 검색 캐시. 비워두면 캐시 없이 동작한다.
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+- [ ] **Step 10: 빌드와 테스트가 통과하는지 확인**
+
+```bash
+npm run build
+npm test
+```
+
+기대: 빌드 성공. `npm test`는 테스트 파일이 없어 "No test files found"로 종료된다 (Vitest는 이때 종료 코드 1을 낸다). 다음 태스크에서 첫 테스트가 추가되면 해결되므로 여기서는 빌드 성공만 확인한다.
+
+- [ ] **Step 11: 커밋**
+
+```bash
+git add -A
+git commit -m "chore: Next.js + Tailwind 다크 셸과 테스트 도구 셋업"
+```
+
+---
+
+### Task 2: 영상 길이 파서와 포맷터
+
+**Files:**
+- Create: `src/lib/duration.ts`
+- Test: `tests/unit/duration.test.ts`
+
+**Interfaces:**
+- Consumes: Task 1의 `@/*` 별칭, Vitest
+- Produces:
+  - `parseIso8601Duration(value: string): number | null` — 초 단위. 형식이 아니면 `null`
+  - `formatDuration(totalSeconds: number): string` — `"0:45"`, `"3:00"` 형태
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`tests/unit/duration.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { formatDuration, parseIso8601Duration } from '@/lib/duration'
+
+describe('parseIso8601Duration', () => {
+  it('초만 있는 값을 파싱한다', () => {
+    expect(parseIso8601Duration('PT45S')).toBe(45)
+  })
+
+  it('분과 초를 파싱한다', () => {
+    expect(parseIso8601Duration('PT1M30S')).toBe(90)
+  })
+
+  it('분만 있는 값을 파싱한다', () => {
+    expect(parseIso8601Duration('PT3M')).toBe(180)
+  })
+
+  it('시간까지 파싱한다', () => {
+    expect(parseIso8601Duration('PT1H2M3S')).toBe(3723)
+  })
+
+  it('일 단위를 파싱한다', () => {
+    expect(parseIso8601Duration('P1DT2H')).toBe(93600)
+  })
+
+  it('0초 라이브 스트림을 0으로 파싱한다', () => {
+    expect(parseIso8601Duration('PT0S')).toBe(0)
+  })
+
+  it('형식이 아니면 null을 반환한다', () => {
+    expect(parseIso8601Duration('')).toBeNull()
+    expect(parseIso8601Duration('45')).toBeNull()
+    expect(parseIso8601Duration('PT')).toBeNull()
+    expect(parseIso8601Duration('P')).toBeNull()
+  })
+})
+
+describe('formatDuration', () => {
+  it('초를 두 자리로 채운다', () => {
+    expect(formatDuration(45)).toBe('0:45')
+    expect(formatDuration(5)).toBe('0:05')
+  })
+
+  it('분 단위를 표시한다', () => {
+    expect(formatDuration(90)).toBe('1:30')
+    expect(formatDuration(180)).toBe('3:00')
+  })
+
+  it('음수와 소수를 안전하게 처리한다', () => {
+    expect(formatDuration(-10)).toBe('0:00')
+    expect(formatDuration(45.9)).toBe('0:45')
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/duration.test.ts`
+Expected: FAIL — `Failed to resolve import "@/lib/duration"`
+
+- [ ] **Step 3: 최소 구현 작성**
+
+`src/lib/duration.ts`:
+
+```ts
+const ISO8601_DURATION = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/
+
+/** ISO8601 기간 문자열을 초로 바꾼다. 형식이 아니면 null. */
+export function parseIso8601Duration(value: string): number | null {
+  const match = ISO8601_DURATION.exec(value)
+  if (!match) return null
+
+  const [, days, hours, minutes, seconds] = match
+  // "P", "PT" 처럼 숫자가 전혀 없는 값은 기간이 아니다.
+  if (!days && !hours && !minutes && !seconds) return null
+
+  return (
+    Number(days ?? 0) * 86_400 +
+    Number(hours ?? 0) * 3_600 +
+    Number(minutes ?? 0) * 60 +
+    Number(seconds ?? 0)
+  )
+}
+
+/** 초를 "M:SS" 로 표시한다. */
+export function formatDuration(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds))
+  const minutes = Math.floor(safe / 60)
+  const seconds = safe % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npx vitest run tests/unit/duration.test.ts`
+Expected: PASS — 10 tests passed
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/duration.ts tests/unit/duration.test.ts
+git commit -m "feat: ISO8601 영상 길이 파서와 표시 포맷터 추가"
+```
+
+---
+
+### Task 3: 쇼츠 필터, 검색어 정규화, 임베드 URL
+
+**Files:**
+- Create: `src/lib/types.ts`
+- Create: `src/lib/shorts.ts`
+- Create: `src/lib/cacheKey.ts`
+- Create: `src/lib/embed.ts`
+- Test: `tests/unit/shorts.test.ts`
+- Test: `tests/unit/cacheKey.test.ts`
+- Test: `tests/unit/embed.test.ts`
+
+**Interfaces:**
+- Consumes: 없음 (순수 함수만)
+- Produces:
+  - `type ShortVideo = { id: string; title: string; channelTitle: string; thumbnailUrl: string; durationSeconds: number }`
+  - `type VideoSearchResult = { query: string; videos: ShortVideo[]; fromCache: boolean; quotaExceeded: boolean }`
+  - `SHORTS_MAX_SECONDS: 180`
+  - `filterShorts(videos: ShortVideo[], maxSeconds?: number): ShortVideo[]`
+  - `normalizeQuery(raw: string): string`
+  - `buildEmbedUrl(videoId: string): string`
+
+- [ ] **Step 1: 타입 파일 작성**
+
+`src/lib/types.ts`:
+
+```ts
+export type ShortVideo = {
+  id: string
+  title: string
+  channelTitle: string
+  thumbnailUrl: string
+  durationSeconds: number
+}
+
+export type VideoSearchResult = {
+  query: string
+  videos: ShortVideo[]
+  fromCache: boolean
+  quotaExceeded: boolean
+}
+```
+
+- [ ] **Step 2: 실패하는 테스트 3개 작성**
+
+`tests/unit/shorts.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { SHORTS_MAX_SECONDS, filterShorts } from '@/lib/shorts'
+import type { ShortVideo } from '@/lib/types'
+
+function video(id: string, durationSeconds: number): ShortVideo {
+  return {
+    id,
+    title: `제목 ${id}`,
+    channelTitle: '채널',
+    thumbnailUrl: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    durationSeconds,
+  }
+}
+
+describe('filterShorts', () => {
+  it('상한이 180초다', () => {
+    expect(SHORTS_MAX_SECONDS).toBe(180)
+  })
+
+  it('180초 이하를 남긴다', () => {
+    const result = filterShorts([video('a', 45), video('b', 180)])
+    expect(result.map((v) => v.id)).toEqual(['a', 'b'])
+  })
+
+  it('180초를 넘으면 제외한다', () => {
+    const result = filterShorts([video('a', 45), video('b', 181), video('c', 1200)])
+    expect(result.map((v) => v.id)).toEqual(['a'])
+  })
+
+  it('0초 라이브 스트림을 제외한다', () => {
+    const result = filterShorts([video('live', 0), video('a', 30)])
+    expect(result.map((v) => v.id)).toEqual(['a'])
+  })
+
+  it('원래 순서를 유지한다', () => {
+    const result = filterShorts([video('c', 30), video('a', 20), video('b', 10)])
+    expect(result.map((v) => v.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('상한을 직접 지정할 수 있다', () => {
+    const result = filterShorts([video('a', 45), video('b', 90)], 60)
+    expect(result.map((v) => v.id)).toEqual(['a'])
+  })
+})
+```
+
+`tests/unit/cacheKey.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { normalizeQuery } from '@/lib/cacheKey'
+
+describe('normalizeQuery', () => {
+  it('앞뒤 공백을 제거한다', () => {
+    expect(normalizeQuery('  스쿼트  ')).toBe('스쿼트')
+  })
+
+  it('소문자로 바꾼다', () => {
+    expect(normalizeQuery('Bench Press')).toBe('bench press')
+  })
+
+  it('연속 공백을 한 칸으로 줄인다', () => {
+    expect(normalizeQuery('벤치   프레스')).toBe('벤치 프레스')
+  })
+
+  it('탭과 줄바꿈도 공백으로 취급한다', () => {
+    expect(normalizeQuery('벤치\t\n프레스')).toBe('벤치 프레스')
+  })
+
+  it('이미 정규화된 값은 그대로 둔다', () => {
+    expect(normalizeQuery('스쿼트')).toBe('스쿼트')
+  })
+
+  it('공백만 있으면 빈 문자열이다', () => {
+    expect(normalizeQuery('   ')).toBe('')
+  })
+})
+```
+
+`tests/unit/embed.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { buildEmbedUrl } from '@/lib/embed'
+
+describe('buildEmbedUrl', () => {
+  it('영상 ID로 임베드 경로를 만든다', () => {
+    expect(buildEmbedUrl('abc123')).toContain('https://www.youtube.com/embed/abc123?')
+  })
+
+  it('모바일 자동재생에 필요한 파라미터를 넣는다', () => {
+    const params = new URL(buildEmbedUrl('abc123')).searchParams
+    expect(params.get('autoplay')).toBe('1')
+    expect(params.get('mute')).toBe('1')
+    expect(params.get('playsinline')).toBe('1')
+  })
+
+  it('단일 영상 반복을 위해 playlist에 같은 ID를 넣는다', () => {
+    const params = new URL(buildEmbedUrl('abc123')).searchParams
+    expect(params.get('loop')).toBe('1')
+    expect(params.get('playlist')).toBe('abc123')
+  })
+
+  it('추천 영상과 브랜딩을 줄인다', () => {
+    const params = new URL(buildEmbedUrl('abc123')).searchParams
+    expect(params.get('rel')).toBe('0')
+    expect(params.get('modestbranding')).toBe('1')
+  })
+})
+```
+
+- [ ] **Step 3: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/shorts.test.ts tests/unit/cacheKey.test.ts tests/unit/embed.test.ts`
+Expected: FAIL — `Failed to resolve import "@/lib/shorts"` 등 3개 파일 모두 해석 실패
+
+- [ ] **Step 4: 최소 구현 작성**
+
+`src/lib/shorts.ts`:
+
+```ts
+import type { ShortVideo } from './types'
+
+/** YouTube 공식 쇼츠 상한. */
+export const SHORTS_MAX_SECONDS = 180
+
+/**
+ * 길이 기준으로 쇼츠만 남긴다.
+ * 0초는 라이브 스트림이므로 제외한다.
+ */
+export function filterShorts(
+  videos: ShortVideo[],
+  maxSeconds: number = SHORTS_MAX_SECONDS,
+): ShortVideo[] {
+  return videos.filter((video) => video.durationSeconds > 0 && video.durationSeconds <= maxSeconds)
+}
+```
+
+`src/lib/cacheKey.ts`:
+
+```ts
+/** 캐시 키로 쓸 수 있게 검색어를 정규화한다. */
+export function normalizeQuery(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+```
+
+`src/lib/embed.ts`:
+
+```ts
+/**
+ * 웹 내부 재생용 임베드 URL을 만든다.
+ * mute=1 은 선택이 아니다. 모바일 브라우저는 음소거 자동재생만 허용한다.
+ * loop=1 은 단일 영상일 때 playlist 에 같은 ID를 넣어야 동작한다.
+ */
+export function buildEmbedUrl(videoId: string): string {
+  const params = new URLSearchParams({
+    autoplay: '1',
+    mute: '1',
+    loop: '1',
+    playlist: videoId,
+    playsinline: '1',
+    rel: '0',
+    modestbranding: '1',
+  })
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`
+}
+```
+
+- [ ] **Step 5: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 4개 파일, 26 tests passed
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add src/lib tests/unit
+git commit -m "feat: 쇼츠 필터, 검색어 정규화, 임베드 URL 생성 추가"
+```
+
+---
+
+### Task 4: YouTube Data API 클라이언트
+
+**Files:**
+- Create: `src/lib/youtube.ts`
+- Test: `tests/unit/youtube.test.ts`
+
+**Interfaces:**
+- Consumes: `parseIso8601Duration` (Task 2), `filterShorts`·`ShortVideo` (Task 3)
+- Produces:
+  - `class QuotaExceededError extends Error`
+  - `searchShorts(query: string, apiKey: string): Promise<ShortVideo[]>`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`tests/unit/youtube.test.ts`:
+
+```ts
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { QuotaExceededError, searchShorts } from '@/lib/youtube'
+
+const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
+const VIDEOS = 'https://www.googleapis.com/youtube/v3/videos'
+
+const server = setupServer()
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+function videoItem(id: string, duration: string) {
+  return {
+    id,
+    snippet: {
+      title: `제목 ${id}`,
+      channelTitle: '헬스톡',
+      thumbnails: { high: { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` } },
+    },
+    contentDetails: { duration },
+  }
+}
+
+describe('searchShorts', () => {
+  it('180초를 넘는 영상을 걸러낸 쇼츠만 반환한다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({
+          items: [{ id: { videoId: 'a' } }, { id: { videoId: 'b' } }, { id: { videoId: 'c' } }],
+        }),
+      ),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [videoItem('a', 'PT45S'), videoItem('b', 'PT1M30S'), videoItem('c', 'PT20M')],
+        }),
+      ),
+    )
+
+    const result = await searchShorts('스쿼트', 'test-key')
+
+    expect(result.map((v) => v.id)).toEqual(['a', 'b'])
+    expect(result[0]).toEqual({
+      id: 'a',
+      title: '제목 a',
+      channelTitle: '헬스톡',
+      thumbnailUrl: 'https://i.ytimg.com/vi/a/hqdefault.jpg',
+      durationSeconds: 45,
+    })
+  })
+
+  it('규정된 검색 파라미터를 보낸다', async () => {
+    let captured: URLSearchParams | undefined
+    server.use(
+      http.get(SEARCH, ({ request }) => {
+        captured = new URL(request.url).searchParams
+        return HttpResponse.json({ items: [] })
+      }),
+    )
+
+    await searchShorts('스쿼트', 'test-key')
+
+    expect(captured?.get('type')).toBe('video')
+    expect(captured?.get('videoDuration')).toBe('short')
+    expect(captured?.get('videoEmbeddable')).toBe('true')
+    expect(captured?.get('regionCode')).toBe('KR')
+    expect(captured?.get('relevanceLanguage')).toBe('ko')
+    expect(captured?.get('maxResults')).toBe('25')
+    expect(captured?.get('q')).toBe('스쿼트')
+    expect(captured?.get('key')).toBe('test-key')
+  })
+
+  it('검색 결과가 없으면 videos 호출을 생략하고 빈 배열을 반환한다', async () => {
+    let videosCalled = false
+    server.use(
+      http.get(SEARCH, () => HttpResponse.json({ items: [] })),
+      http.get(VIDEOS, () => {
+        videosCalled = true
+        return HttpResponse.json({ items: [] })
+      }),
+    )
+
+    const result = await searchShorts('없는운동', 'test-key')
+
+    expect(result).toEqual([])
+    expect(videosCalled).toBe(false)
+  })
+
+  it('쿼터 초과면 QuotaExceededError를 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json(
+          { error: { errors: [{ reason: 'quotaExceeded' }] } },
+          { status: 403 },
+        ),
+      ),
+    )
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('쿼터 외의 오류는 일반 Error로 던진다', async () => {
+    server.use(http.get(SEARCH, () => HttpResponse.json({}, { status: 500 })))
+
+    const promise = searchShorts('스쿼트', 'test-key')
+    await expect(promise).rejects.toThrow(/500/)
+    await expect(promise).rejects.not.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('high 썸네일이 없으면 medium, default 순으로 대체한다', async () => {
+    server.use(
+      http.get(SEARCH, () => HttpResponse.json({ items: [{ id: { videoId: 'a' } }] })),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'a',
+              snippet: {
+                title: '제목 a',
+                channelTitle: '헬스톡',
+                thumbnails: { default: { url: 'https://i.ytimg.com/vi/a/default.jpg' } },
+              },
+              contentDetails: { duration: 'PT30S' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const result = await searchShorts('스쿼트', 'test-key')
+
+    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/default.jpg')
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/youtube.test.ts`
+Expected: FAIL — `Failed to resolve import "@/lib/youtube"`
+
+- [ ] **Step 3: 최소 구현 작성**
+
+`src/lib/youtube.ts`:
+
+```ts
+import { parseIso8601Duration } from './duration'
+import { filterShorts } from './shorts'
+import type { ShortVideo } from './types'
+
+const DEFAULT_API_BASE = 'https://www.googleapis.com/youtube/v3'
+
+/** YouTube 일일 쿼터가 소진된 상태. 캐시 폴백으로 전환하는 신호다. */
+export class QuotaExceededError extends Error {
+  constructor() {
+    super('YouTube API quota exceeded')
+    this.name = 'QuotaExceededError'
+  }
+}
+
+type SearchItem = { id?: { videoId?: string } }
+
+type Thumbnail = { url: string }
+
+type VideoItem = {
+  id: string
+  snippet: {
+    title: string
+    channelTitle: string
+    thumbnails: { high?: Thumbnail; medium?: Thumbnail; default?: Thumbnail }
+  }
+  contentDetails: { duration: string }
+}
+
+function apiBase(): string {
+  return process.env.YOUTUBE_API_BASE || DEFAULT_API_BASE
+}
+
+async function readJson<T>(response: Response, label: string): Promise<T> {
+  if (response.ok) return (await response.json()) as T
+
+  const body = await response.text()
+  if (response.status === 403 && body.includes('quotaExceeded')) {
+    throw new QuotaExceededError()
+  }
+  throw new Error(`YouTube ${label} 호출 실패: ${response.status} ${body}`)
+}
+
+function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails']): string {
+  return thumbnails.high?.url ?? thumbnails.medium?.url ?? thumbnails.default?.url ?? ''
+}
+
+/**
+ * 운동 이름으로 쇼츠를 찾는다.
+ * search.list 는 실제 길이를 주지 않으므로 videos.list 로 한 번 더 확인한다.
+ * 비용: search.list 100 units + videos.list 1 unit = 101 units.
+ */
+export async function searchShorts(query: string, apiKey: string): Promise<ShortVideo[]> {
+  const searchParams = new URLSearchParams({
+    key: apiKey,
+    part: 'id',
+    q: query,
+    type: 'video',
+    videoDuration: 'short',
+    videoEmbeddable: 'true',
+    regionCode: 'KR',
+    relevanceLanguage: 'ko',
+    maxResults: '25',
+  })
+
+  const searchResponse = await fetch(`${apiBase()}/search?${searchParams.toString()}`)
+  const searchJson = await readJson<{ items?: SearchItem[] }>(searchResponse, 'search')
+
+  const ids = (searchJson.items ?? [])
+    .map((item) => item.id?.videoId)
+    .filter((id): id is string => Boolean(id))
+
+  if (ids.length === 0) return []
+
+  const videosParams = new URLSearchParams({
+    key: apiKey,
+    part: 'snippet,contentDetails',
+    id: ids.join(','),
+  })
+
+  const videosResponse = await fetch(`${apiBase()}/videos?${videosParams.toString()}`)
+  const videosJson = await readJson<{ items?: VideoItem[] }>(videosResponse, 'videos')
+
+  const videos: ShortVideo[] = (videosJson.items ?? []).map((item) => ({
+    id: item.id,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle,
+    thumbnailUrl: pickThumbnail(item.snippet.thumbnails),
+    durationSeconds: parseIso8601Duration(item.contentDetails.duration) ?? 0,
+  }))
+
+  return filterShorts(videos)
+}
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 32 tests passed
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/youtube.ts tests/unit/youtube.test.ts
+git commit -m "feat: YouTube 쇼츠 검색 클라이언트 추가 (2단계 호출, 쿼터 오류 판별)"
+```
+
+---
+
+### Task 5: 검색 캐시
+
+**Files:**
+- Create: `supabase/migrations/0001_search_cache.sql`
+- Create: `src/lib/searchCache.ts`
+- Test: `tests/unit/searchCache.test.ts`
+
+**Interfaces:**
+- Consumes: `normalizeQuery` (Task 3), `ShortVideo` (Task 3), `@supabase/supabase-js`
+- Produces:
+  - `CACHE_TTL_MS: number` (7일)
+  - `isCacheFresh(createdAt: string, now: number): boolean`
+  - `readCache(query: string, options?: { allowStale?: boolean; now?: number }): Promise<ShortVideo[] | null>`
+  - `writeCache(query: string, videos: ShortVideo[]): Promise<void>`
+
+- [ ] **Step 1: 마이그레이션 작성**
+
+`supabase/migrations/0001_search_cache.sql`:
+
+```sql
+create table if not exists public.search_cache (
+  query_key  text        primary key,
+  payload    jsonb       not null,
+  created_at timestamptz not null default now()
+);
+
+-- RLS를 켜고 정책을 만들지 않는다.
+-- anon/authenticated 는 접근할 수 없고, 서버가 쓰는 service_role 만 RLS를 우회한다.
+alter table public.search_cache enable row level security;
+```
+
+Supabase 콘솔의 SQL Editor에 붙여 실행한다.
+
+- [ ] **Step 2: 실패하는 테스트 작성**
+
+`tests/unit/searchCache.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { CACHE_TTL_MS, isCacheFresh, readCache, writeCache } from '@/lib/searchCache'
+
+const NOW = new Date('2026-07-25T00:00:00.000Z').getTime()
+
+function daysAgo(days: number): string {
+  return new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
+describe('isCacheFresh', () => {
+  it('TTL이 7일이다', () => {
+    expect(CACHE_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000)
+  })
+
+  it('방금 만든 항목은 신선하다', () => {
+    expect(isCacheFresh(daysAgo(0), NOW)).toBe(true)
+  })
+
+  it('6일 전 항목은 신선하다', () => {
+    expect(isCacheFresh(daysAgo(6), NOW)).toBe(true)
+  })
+
+  it('8일 전 항목은 만료됐다', () => {
+    expect(isCacheFresh(daysAgo(8), NOW)).toBe(false)
+  })
+
+  it('날짜로 해석할 수 없으면 만료로 본다', () => {
+    expect(isCacheFresh('언젠가', NOW)).toBe(false)
+  })
+})
+
+describe('Supabase 환경변수가 없을 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+  })
+
+  it('읽기는 null을 반환한다', async () => {
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  })
+
+  it('쓰기는 조용히 성공한다', async () => {
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+  })
+})
+```
+
+- [ ] **Step 3: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts`
+Expected: FAIL — `Failed to resolve import "@/lib/searchCache"`
+
+- [ ] **Step 4: 최소 구현 작성**
+
+`src/lib/searchCache.ts`:
+
+```ts
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { normalizeQuery } from './cacheKey'
+import type { ShortVideo } from './types'
+
+export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+const TABLE = 'search_cache'
+
+/**
+ * 캐시는 선택 기능이다.
+ * 환경변수가 없으면 null을 돌려 캐시 없이 동작하게 한다.
+ */
+function getClient(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return createClient(url, key, { auth: { persistSession: false } })
+}
+
+export function isCacheFresh(createdAt: string, now: number): boolean {
+  const created = new Date(createdAt).getTime()
+  if (Number.isNaN(created)) return false
+  return now - created <= CACHE_TTL_MS
+}
+
+/**
+ * 캐시된 검색 결과를 읽는다.
+ * allowStale 은 쿼터 초과 폴백용이다. 만료된 결과라도 빈 화면보다 낫다.
+ * 캐시 장애는 검색을 실패시키지 않는다. 어떤 오류든 null로 흡수한다.
+ */
+export async function readCache(
+  query: string,
+  options: { allowStale?: boolean; now?: number } = {},
+): Promise<ShortVideo[] | null> {
+  const client = getClient()
+  if (!client) return null
+
+  const { allowStale = false, now = Date.now() } = options
+
+  try {
+    const { data, error } = await client
+      .from(TABLE)
+      .select('payload, created_at')
+      .eq('query_key', normalizeQuery(query))
+      .maybeSingle()
+
+    if (error || !data) return null
+    if (!allowStale && !isCacheFresh(data.created_at as string, now)) return null
+    return data.payload as ShortVideo[]
+  } catch {
+    return null
+  }
+}
+
+/** 검색 결과를 캐시에 저장한다. 실패는 무시한다. */
+export async function writeCache(query: string, videos: ShortVideo[]): Promise<void> {
+  const client = getClient()
+  if (!client) return
+
+  try {
+    await client.from(TABLE).upsert({
+      query_key: normalizeQuery(query),
+      payload: videos,
+      created_at: new Date().toISOString(),
+    })
+  } catch {
+    // 캐시 쓰기 실패는 사용자에게 영향이 없다.
+  }
+}
+```
+
+- [ ] **Step 5: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 39 tests passed
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add supabase src/lib/searchCache.ts tests/unit/searchCache.test.ts
+git commit -m "feat: Supabase 검색 캐시 추가 (7일 TTL, 장애 시 무해하게 건너뜀)"
+```
+
+---
+
+### Task 6: 검색 오케스트레이션과 API 라우트
+
+**Files:**
+- Create: `src/lib/videoSearch.ts`
+- Create: `src/app/api/videos/route.ts`
+- Test: `tests/unit/videoSearch.test.ts`
+
+**Interfaces:**
+- Consumes: `normalizeQuery` (Task 3), `readCache`·`writeCache` (Task 5), `searchShorts`·`QuotaExceededError` (Task 4), `VideoSearchResult` (Task 3)
+- Produces: `getVideos(rawQuery: string): Promise<VideoSearchResult>` — 페이지와 API 라우트가 함께 쓴다
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`tests/unit/videoSearch.test.ts`:
+
+```ts
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { getVideos } from '@/lib/videoSearch'
+
+const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
+const VIDEOS = 'https://www.googleapis.com/youtube/v3/videos'
+
+const server = setupServer()
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+beforeEach(() => {
+  process.env.YOUTUBE_API_KEY = 'test-key'
+  // 캐시를 끈 상태로 순수 조회 경로를 검증한다.
+  delete process.env.SUPABASE_URL
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY
+})
+
+function mockYouTube(items: Array<{ id: string; duration: string }>) {
+  server.use(
+    http.get(SEARCH, () =>
+      HttpResponse.json({ items: items.map((item) => ({ id: { videoId: item.id } })) }),
+    ),
+    http.get(VIDEOS, () =>
+      HttpResponse.json({
+        items: items.map((item) => ({
+          id: item.id,
+          snippet: {
+            title: `제목 ${item.id}`,
+            channelTitle: '헬스톡',
+            thumbnails: { high: { url: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg` } },
+          },
+          contentDetails: { duration: item.duration },
+        })),
+      }),
+    ),
+  )
+}
+
+describe('getVideos', () => {
+  it('검색어를 정규화해서 결과를 반환한다', async () => {
+    mockYouTube([{ id: 'a', duration: 'PT45S' }])
+
+    const result = await getVideos('  스쿼트  ')
+
+    expect(result.query).toBe('스쿼트')
+    expect(result.videos.map((v) => v.id)).toEqual(['a'])
+    expect(result.fromCache).toBe(false)
+    expect(result.quotaExceeded).toBe(false)
+  })
+
+  it('빈 검색어는 API를 호출하지 않는다', async () => {
+    const result = await getVideos('   ')
+
+    expect(result).toEqual({ query: '', videos: [], fromCache: false, quotaExceeded: false })
+  })
+
+  it('쿼터 초과면 quotaExceeded를 표시하고 던지지 않는다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'quotaExceeded' }] } }, { status: 403 }),
+      ),
+    )
+
+    const result = await getVideos('스쿼트')
+
+    expect(result.quotaExceeded).toBe(true)
+    expect(result.videos).toEqual([])
+  })
+
+  it('쿼터 외의 오류는 그대로 던진다', async () => {
+    server.use(http.get(SEARCH, () => HttpResponse.json({}, { status: 500 })))
+
+    await expect(getVideos('스쿼트')).rejects.toThrow(/500/)
+  })
+
+  it('API 키가 없으면 던진다', async () => {
+    delete process.env.YOUTUBE_API_KEY
+
+    await expect(getVideos('스쿼트')).rejects.toThrow(/YOUTUBE_API_KEY/)
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/videoSearch.test.ts`
+Expected: FAIL — `Failed to resolve import "@/lib/videoSearch"`
+
+- [ ] **Step 3: 최소 구현 작성**
+
+`src/lib/videoSearch.ts`:
+
+```ts
+import { normalizeQuery } from './cacheKey'
+import { readCache, writeCache } from './searchCache'
+import type { VideoSearchResult } from './types'
+import { QuotaExceededError, searchShorts } from './youtube'
+
+/**
+ * 캐시 우선 검색.
+ * 서버 컴포넌트와 API 라우트가 이 함수를 공유한다.
+ * 쿼터가 소진되면 만료된 캐시라도 돌려주고 배너 신호를 켠다.
+ */
+export async function getVideos(rawQuery: string): Promise<VideoSearchResult> {
+  const query = normalizeQuery(rawQuery)
+  if (!query) {
+    return { query, videos: [], fromCache: false, quotaExceeded: false }
+  }
+
+  const cached = await readCache(query)
+  if (cached) {
+    return { query, videos: cached, fromCache: true, quotaExceeded: false }
+  }
+
+  const apiKey = process.env.YOUTUBE_API_KEY
+  if (!apiKey) throw new Error('YOUTUBE_API_KEY 환경변수가 필요합니다')
+
+  try {
+    const videos = await searchShorts(query, apiKey)
+    await writeCache(query, videos)
+    return { query, videos, fromCache: false, quotaExceeded: false }
+  } catch (error) {
+    if (!(error instanceof QuotaExceededError)) throw error
+
+    const stale = await readCache(query, { allowStale: true })
+    return { query, videos: stale ?? [], fromCache: true, quotaExceeded: true }
+  }
+}
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npx vitest run tests/unit/videoSearch.test.ts`
+Expected: PASS — 5 tests passed
+
+- [ ] **Step 5: API 라우트 작성**
+
+`src/app/api/videos/route.ts`:
+
+```ts
+import { NextResponse } from 'next/server'
+import { getVideos } from '@/lib/videoSearch'
+
+export async function GET(request: Request) {
+  const query = new URL(request.url).searchParams.get('q') ?? ''
+  if (!query.trim()) {
+    return NextResponse.json({ error: 'q 파라미터가 필요합니다' }, { status: 400 })
+  }
+
+  const result = await getVideos(query)
+  return NextResponse.json(result)
+}
+```
+
+- [ ] **Step 6: 빌드와 전체 테스트 확인**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: 빌드 성공, 44 tests passed
+
+- [ ] **Step 7: 커밋**
+
+```bash
+git add src/lib/videoSearch.ts src/app/api tests/unit/videoSearch.test.ts
+git commit -m "feat: 캐시 우선 검색 오케스트레이션과 /api/videos 라우트 추가"
+```
+
+---
+
+### Task 7: 운동 탭 화면
+
+**Files:**
+- Create: `src/data/categories.ts`
+- Create: `src/components/SearchBar.tsx`
+- Create: `src/components/CategoryChips.tsx`
+- Create: `src/components/VideoGrid.tsx`
+- Create: `src/components/EmptyState.tsx`
+- Create: `src/components/QuotaBanner.tsx`
+- Create: `src/app/(tabs)/error.tsx`
+- Modify: `src/app/(tabs)/page.tsx` (Task 1의 임시 내용을 교체)
+
+**Interfaces:**
+- Consumes: `getVideos` (Task 6), `formatDuration` (Task 2), `ShortVideo` (Task 3)
+- Produces:
+  - `BODY_PARTS: ReadonlyArray<{ id: string; label: string; query: string }>`
+  - `POPULAR_EXERCISES: readonly string[]` (20개, Task 10의 시드가 사용)
+  - `data-testid="video-card"` — 그리드 카드. E2E가 이 값으로 카드를 센다
+  - `data-testid="quota-banner"`, `data-testid="empty-state"`
+
+- [ ] **Step 1: 카테고리 데이터 작성**
+
+`src/data/categories.ts`:
+
+```ts
+export const BODY_PARTS = [
+  { id: 'chest', label: '가슴', query: '가슴 운동' },
+  { id: 'back', label: '등', query: '등 운동' },
+  { id: 'shoulder', label: '어깨', query: '어깨 운동' },
+  { id: 'legs', label: '하체', query: '하체 운동' },
+  { id: 'arms', label: '팔', query: '팔 운동' },
+  { id: 'core', label: '코어', query: '코어 운동' },
+  { id: 'full', label: '전신', query: '전신 운동' },
+] as const
+
+/** 캐시 시드와 추천 검색어에 함께 쓴다. */
+export const POPULAR_EXERCISES = [
+  '스쿼트',
+  '벤치프레스',
+  '데드리프트',
+  '풀업',
+  '랫풀다운',
+  '오버헤드프레스',
+  '바벨로우',
+  '덤벨플라이',
+  '레그프레스',
+  '런지',
+  '플랭크',
+  '사이드레터럴레이즈',
+  '바이셉컬',
+  '트라이셉스익스텐션',
+  '힙쓰러스트',
+  '레그컬',
+  '케이블크로스오버',
+  '친업',
+  '버피',
+  '마운틴클라이머',
+] as const
+```
+
+- [ ] **Step 2: 검색창 작성**
+
+`src/components/SearchBar.tsx`:
+
+```tsx
+/** GET 폼이라 자바스크립트 없이도 동작하고, 검색 상태가 URL에 남는다. */
+export default function SearchBar({ defaultValue = '' }: { defaultValue?: string }) {
+  return (
+    <form action="/" method="get" role="search" className="flex gap-2">
+      <input
+        type="search"
+        name="q"
+        defaultValue={defaultValue}
+        placeholder="운동 이름을 검색하세요"
+        aria-label="운동 이름"
+        className="h-12 min-w-0 flex-1 rounded-xl border border-border bg-surface px-4 text-text placeholder:text-muted focus:border-accent focus:outline-none"
+      />
+      <button
+        type="submit"
+        className="h-12 shrink-0 rounded-xl bg-accent px-5 font-semibold text-bg"
+      >
+        검색
+      </button>
+    </form>
+  )
+}
+```
+
+- [ ] **Step 3: 카테고리 칩 작성**
+
+`src/components/CategoryChips.tsx`:
+
+```tsx
+import Link from 'next/link'
+import { BODY_PARTS } from '@/data/categories'
+
+export default function CategoryChips() {
+  return (
+    <ul className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+      {BODY_PARTS.map((part) => (
+        <li key={part.id} className="shrink-0">
+          <Link
+            href={`/?q=${encodeURIComponent(part.query)}`}
+            className="inline-flex h-9 items-center rounded-full border border-border bg-surface2 px-4 text-sm text-text"
+          >
+            {part.label}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+- [ ] **Step 4: 그리드 작성**
+
+`src/components/VideoGrid.tsx`:
+
+```tsx
+import Image from 'next/image'
+import Link from 'next/link'
+import { formatDuration } from '@/lib/duration'
+import type { ShortVideo } from '@/lib/types'
+
+export default function VideoGrid({ query, videos }: { query: string; videos: ShortVideo[] }) {
+  return (
+    <ul className="grid grid-cols-2 gap-3">
+      {videos.map((video, index) => (
+        <li key={video.id}>
+          <Link
+            href={`/feed?q=${encodeURIComponent(query)}&i=${index}`}
+            data-testid="video-card"
+            className="block"
+          >
+            <div className="relative aspect-[9/16] overflow-hidden rounded-xl bg-surface2">
+              <Image src={video.thumbnailUrl} alt="" fill sizes="50vw" className="object-cover" />
+              <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] text-text">
+                {formatDuration(video.durationSeconds)}
+              </span>
+            </div>
+            <p className="mt-1.5 line-clamp-2 text-sm text-text">{video.title}</p>
+            <p className="mt-0.5 text-xs text-muted">{video.channelTitle}</p>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+- [ ] **Step 5: 빈 결과와 쿼터 배너 작성**
+
+`src/components/EmptyState.tsx`:
+
+```tsx
+import Link from 'next/link'
+import { POPULAR_EXERCISES } from '@/data/categories'
+
+export default function EmptyState({ query }: { query: string }) {
+  return (
+    <div data-testid="empty-state" className="rounded-xl border border-border bg-surface p-5">
+      <p className="text-sm text-text">
+        <span className="font-semibold">{query}</span> 에 맞는 쇼츠를 찾지 못했어요.
+      </p>
+      <p className="mt-1 text-xs text-muted">철자를 확인하거나 아래 운동을 눌러보세요.</p>
+      <ul className="mt-3 flex flex-wrap gap-2">
+        {POPULAR_EXERCISES.slice(0, 6).map((name) => (
+          <li key={name}>
+            <Link
+              href={`/?q=${encodeURIComponent(name)}`}
+              className="inline-flex h-8 items-center rounded-full border border-border bg-surface2 px-3 text-xs text-text"
+            >
+              {name}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+```
+
+`src/components/QuotaBanner.tsx`:
+
+```tsx
+export default function QuotaBanner() {
+  return (
+    <p
+      data-testid="quota-banner"
+      className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-text"
+    >
+      오늘 검색 한도에 도달했어요. 이미 찾아둔 운동은 계속 볼 수 있습니다.
+    </p>
+  )
+}
+```
+
+- [ ] **Step 6: 네트워크 실패 재시도 화면 작성**
+
+`getVideos`가 쿼터 외의 이유로 실패하면 예외가 서버 컴포넌트를 통과한다. 라우트 그룹에 에러 경계를 둬서 앱 전체가 죽는 대신 재시도 버튼을 보여준다.
+
+`src/app/(tabs)/error.tsx`:
+
+```tsx
+'use client'
+
+export default function TabsError({ reset }: { error: Error; reset: () => void }) {
+  return (
+    <div
+      data-testid="error-state"
+      className="rounded-xl border border-danger/40 bg-danger/10 p-5 text-center"
+    >
+      <p className="text-sm text-text">영상을 불러오지 못했어요.</p>
+      <p className="mt-1 text-xs text-muted">네트워크를 확인한 뒤 다시 시도해 주세요.</p>
+      <button
+        type="button"
+        onClick={reset}
+        className="mt-4 h-10 rounded-xl bg-accent px-5 text-sm font-semibold text-bg"
+      >
+        다시 시도
+      </button>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 7: 운동 탭 페이지 작성**
+
+`src/app/(tabs)/page.tsx` 전체를 교체:
+
+```tsx
+import CategoryChips from '@/components/CategoryChips'
+import EmptyState from '@/components/EmptyState'
+import QuotaBanner from '@/components/QuotaBanner'
+import SearchBar from '@/components/SearchBar'
+import VideoGrid from '@/components/VideoGrid'
+import { getVideos } from '@/lib/videoSearch'
+
+export default async function ExercisePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>
+}) {
+  const { q = '' } = await searchParams
+  const result = q.trim() ? await getVideos(q) : null
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-bold">어떤 운동을 볼까요</h1>
+      <SearchBar defaultValue={q} />
+      <CategoryChips />
+
+      {result?.quotaExceeded ? <QuotaBanner /> : null}
+
+      {result === null ? (
+        <p className="pt-6 text-center text-sm text-muted">
+          운동 이름을 검색하거나 위 부위를 선택하세요.
+        </p>
+      ) : result.videos.length === 0 ? (
+        <EmptyState query={result.query} />
+      ) : (
+        <VideoGrid query={result.query} videos={result.videos} />
+      )}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 8: 빌드가 통과하는지 확인**
+
+```bash
+npm run build
+```
+
+Expected: 빌드 성공. `/` 가 동적 라우트로 표시된다.
+
+- [ ] **Step 9: 커밋**
+
+```bash
+git add src/data src/components "src/app/(tabs)"
+git commit -m "feat: 운동 탭 화면 추가 (검색창, 카테고리 칩, 썸네일 그리드)"
+```
+
+---
+
+### Task 8: 전면 스와이프 피드
+
+**Files:**
+- Create: `src/components/FeedSlide.tsx`
+- Create: `src/components/ShortsFeed.tsx`
+- Create: `src/components/BackButton.tsx`
+- Create: `src/app/feed/page.tsx`
+
+**Interfaces:**
+- Consumes: `buildEmbedUrl` (Task 3), `getVideos` (Task 6), `ShortVideo` (Task 3)
+- Produces: `/feed?q=<검색어>&i=<인덱스>` 라우트. `data-testid="feed-slide"`, `data-testid="back-button"`
+
+- [ ] **Step 1: 슬라이드 작성**
+
+`src/components/FeedSlide.tsx`:
+
+```tsx
+import Image from 'next/image'
+import { buildEmbedUrl } from '@/lib/embed'
+import type { ShortVideo } from '@/lib/types'
+
+/**
+ * active 가 false 면 iframe을 만들지 않는다.
+ * 슬라이드 수만큼 iframe을 동시에 띄우면 모바일에서 즉시 버벅인다.
+ */
+export default function FeedSlide({ video, active }: { video: ShortVideo; active: boolean }) {
+  return (
+    <div className="relative h-full w-full bg-black">
+      {active ? (
+        <iframe
+          src={buildEmbedUrl(video.id)}
+          title={video.title}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          className="absolute inset-0 h-full w-full border-0"
+        />
+      ) : (
+        <Image src={video.thumbnailUrl} alt="" fill sizes="100vw" className="object-cover opacity-50" />
+      )}
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pb-8">
+        <p className="line-clamp-2 text-sm font-medium text-text">{video.title}</p>
+        <p className="mt-0.5 text-xs text-muted">{video.channelTitle}</p>
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 2: 피드 컨테이너 작성**
+
+`src/components/ShortsFeed.tsx`:
+
+```tsx
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import FeedSlide from '@/components/FeedSlide'
+import type { ShortVideo } from '@/lib/types'
+
+/** 현재 슬라이드 기준 앞뒤 몇 개까지 iframe을 마운트할지. */
+const MOUNT_WINDOW = 1
+
+export default function ShortsFeed({
+  videos,
+  initialIndex,
+}: {
+  videos: ShortVideo[]
+  initialIndex: number
+}) {
+  const [activeIndex, setActiveIndex] = useState(initialIndex)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const slideRefs = useRef<Array<HTMLDivElement | null>>([])
+
+  // 그리드에서 누른 영상으로 바로 이동한다.
+  useEffect(() => {
+    slideRefs.current[initialIndex]?.scrollIntoView({ block: 'start' })
+  }, [initialIndex])
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const index = Number((entry.target as HTMLElement).dataset.index)
+          if (!Number.isNaN(index)) setActiveIndex(index)
+        }
+      },
+      { root: containerRef.current, threshold: 0.6 },
+    )
+
+    for (const slide of slideRefs.current) {
+      if (slide) observer.observe(slide)
+    }
+    return () => observer.disconnect()
+  }, [videos.length])
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-dvh snap-y snap-mandatory overflow-y-scroll overscroll-contain"
+    >
+      {videos.map((video, index) => (
+        <div
+          key={video.id}
+          data-index={index}
+          data-testid="feed-slide"
+          ref={(element) => {
+            slideRefs.current[index] = element
+          }}
+          className="h-dvh w-full snap-start snap-always"
+        >
+          <FeedSlide video={video} active={Math.abs(index - activeIndex) <= MOUNT_WINDOW} />
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 3: 뒤로가기 버튼 작성**
+
+`src/components/BackButton.tsx`:
+
+```tsx
+'use client'
+
+import { useRouter } from 'next/navigation'
+
+/**
+ * Link 로 그리드로 되돌아가면 히스토리가 쌓여 스크롤 위치가 복원되지 않는다.
+ * 실제 뒤로가기를 써야 브라우저가 그리드의 스크롤 위치를 되돌려준다.
+ */
+export default function BackButton() {
+  const router = useRouter()
+
+  return (
+    <button
+      type="button"
+      onClick={() => router.back()}
+      data-testid="back-button"
+      aria-label="뒤로"
+      className="fixed left-3 top-3 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-text"
+    >
+      ←
+    </button>
+  )
+}
+```
+
+- [ ] **Step 4: 피드 페이지 작성**
+
+`src/app/feed/page.tsx`:
+
+```tsx
+import { notFound } from 'next/navigation'
+import BackButton from '@/components/BackButton'
+import ShortsFeed from '@/components/ShortsFeed'
+import { getVideos } from '@/lib/videoSearch'
+
+export default async function FeedPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; i?: string }>
+}) {
+  const { q = '', i } = await searchParams
+  if (!q.trim()) notFound()
+
+  const result = await getVideos(q)
+  if (result.videos.length === 0) notFound()
+
+  const requested = Number(i ?? 0)
+  const initialIndex = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.trunc(requested), 0), result.videos.length - 1)
+    : 0
+
+  return (
+    <>
+      <BackButton />
+      <ShortsFeed videos={result.videos} initialIndex={initialIndex} />
+    </>
+  )
+}
+```
+
+- [ ] **Step 5: 빌드와 전체 테스트 확인**
+
+```bash
+npm run build
+npm test
+```
+
+Expected: 빌드 성공, 44 tests passed
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add src/components/FeedSlide.tsx src/components/ShortsFeed.tsx src/components/BackButton.tsx src/app/feed
+git commit -m "feat: 전면 세로 스와이프 쇼츠 피드 추가"
+```
+
+---
+
+### Task 9: E2E 테스트
+
+**Files:**
+- Create: `tests/e2e/mock-youtube.mjs`
+- Create: `tests/e2e/search-feed.spec.ts`
+- Create: `playwright.config.ts`
+
+**Interfaces:**
+- Consumes: Task 7·8의 `data-testid` 값, `YOUTUBE_API_BASE` 환경변수 (Task 4)
+- Produces: `npm run test:e2e`
+
+- [ ] **Step 1: 모의 YouTube 서버 작성**
+
+`tests/e2e/mock-youtube.mjs`:
+
+```js
+import { createServer } from 'node:http'
+
+const PORT = 4010
+
+// 쇼츠 9개 + 걸러져야 하는 20분 영상 1개.
+// 그리드가 화면보다 길어야 스크롤 복원 테스트가 의미를 갖고,
+// 슬라이드가 마운트 윈도우(±1)보다 많아야 iframe 개수로 윈도우를 검증할 수 있다.
+const CATALOG = [
+  { id: 'vid1', title: '스쿼트 기본 자세', channelTitle: '헬스톡', duration: 'PT45S' },
+  { id: 'vid2', title: '무릎 안 아픈 스쿼트', channelTitle: '김코치', duration: 'PT58S' },
+  { id: 'vid3', title: '하체 루틴 30초', channelTitle: '짐랫', duration: 'PT30S' },
+  { id: 'vid4', title: '스쿼트 발 너비', channelTitle: '헬스톡', duration: 'PT52S' },
+  { id: 'vid5', title: '스쿼트 호흡법', channelTitle: '김코치', duration: 'PT40S' },
+  { id: 'vid6', title: '스쿼트 흔한 실수 3가지', channelTitle: '짐랫', duration: 'PT1M10S' },
+  { id: 'vid7', title: '맨몸 스쿼트 100개', channelTitle: '홈트왕', duration: 'PT2M30S' },
+  { id: 'vid8', title: '스미스머신 스쿼트', channelTitle: '헬스톡', duration: 'PT1M45S' },
+  { id: 'vid9', title: '스쿼트 무게 늘리기', channelTitle: '김코치', duration: 'PT3M' },
+  { id: 'vid10', title: '스쿼트 20분 완전 강의', channelTitle: '헬스톡', duration: 'PT20M' },
+]
+
+function videoItem(entry) {
+  return {
+    id: entry.id,
+    snippet: {
+      title: entry.title,
+      channelTitle: entry.channelTitle,
+      thumbnails: { high: { url: `https://i.ytimg.com/vi/${entry.id}/hqdefault.jpg` } },
+    },
+    contentDetails: { duration: entry.duration },
+  }
+}
+
+const server = createServer((req, res) => {
+  const url = new URL(req.url, `http://127.0.0.1:${PORT}`)
+  const query = url.searchParams.get('q') ?? ''
+  res.setHeader('content-type', 'application/json')
+
+  if (query.includes('쿼터초과')) {
+    res.statusCode = 403
+    res.end(JSON.stringify({ error: { errors: [{ reason: 'quotaExceeded' }] } }))
+    return
+  }
+
+  if (url.pathname.endsWith('/search')) {
+    const items = query.includes('없는운동')
+      ? []
+      : CATALOG.map((entry) => ({ id: { videoId: entry.id } }))
+    res.end(JSON.stringify({ items }))
+    return
+  }
+
+  if (url.pathname.endsWith('/videos')) {
+    const ids = (url.searchParams.get('id') ?? '').split(',')
+    res.end(JSON.stringify({ items: CATALOG.filter((e) => ids.includes(e.id)).map(videoItem) }))
+    return
+  }
+
+  res.statusCode = 404
+  res.end('{}')
+})
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`mock youtube listening on ${PORT}`)
+})
+```
+
+- [ ] **Step 2: Playwright 설정 작성**
+
+`playwright.config.ts`:
+
+```ts
+import { defineConfig, devices } from '@playwright/test'
+
+const BASE_URL = 'http://127.0.0.1:3000'
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  use: { baseURL: BASE_URL, ...devices['Pixel 5'] },
+  webServer: [
+    {
+      command: 'node tests/e2e/mock-youtube.mjs',
+      port: 4010,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'npm run build && npm run start',
+      url: BASE_URL,
+      timeout: 180_000,
+      reuseExistingServer: !process.env.CI,
+      // SUPABASE_* 를 주지 않으므로 캐시 없이 매번 모의 서버를 호출한다.
+      env: {
+        YOUTUBE_API_KEY: 'test-key',
+        YOUTUBE_API_BASE: 'http://127.0.0.1:4010/youtube/v3',
+      },
+    },
+  ],
+})
+```
+
+- [ ] **Step 3: 실패하는 E2E 테스트 작성**
+
+`tests/e2e/search-feed.spec.ts`:
+
+```ts
+import { expect, test } from '@playwright/test'
+
+test('검색하면 쇼츠만 그리드에 나온다', async ({ page }) => {
+  await page.goto('/')
+  await page.getByLabel('운동 이름').fill('스쿼트')
+  await page.getByRole('button', { name: '검색' }).click()
+
+  // 모의 서버는 10개를 주지만 20분 영상은 걸러진다.
+  await expect(page.getByTestId('video-card')).toHaveCount(9)
+  await expect(page.getByText('스쿼트 기본 자세')).toBeVisible()
+  await expect(page.getByText('스쿼트 20분 완전 강의')).toHaveCount(0)
+})
+
+test('카드를 누르면 전면 피드에서 재생된다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').nth(1).click()
+
+  await expect(page).toHaveURL(/\/feed\?q=.*&i=1/)
+  await expect(page.getByTestId('feed-slide')).toHaveCount(9)
+  // 슬라이드는 9개지만 마운트 윈도우가 ±1이므로 iframe은 3개만 존재한다.
+  await expect(page.locator('iframe')).toHaveCount(3)
+  await expect(page.locator('iframe').first()).toHaveAttribute('src', /playsinline=1/)
+})
+
+test('뒤로가기로 그리드의 스크롤 위치가 복원된다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.evaluate(() => window.scrollTo(0, 400))
+  const before = await page.evaluate(() => window.scrollY)
+  expect(before).toBeGreaterThan(0)
+
+  await page.getByTestId('video-card').first().click()
+  await expect(page).toHaveURL(/\/feed/)
+
+  await page.getByTestId('back-button').click()
+  await expect(page).toHaveURL(/\/\?q=/)
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+})
+
+test('결과가 없으면 추천 검색어를 보여준다', async ({ page }) => {
+  await page.goto('/?q=없는운동')
+
+  await expect(page.getByTestId('empty-state')).toBeVisible()
+  await expect(page.getByRole('link', { name: '스쿼트' })).toBeVisible()
+})
+
+test('쿼터가 초과되면 배너를 보여주고 화면은 유지된다', async ({ page }) => {
+  await page.goto('/?q=쿼터초과')
+
+  await expect(page.getByTestId('quota-banner')).toBeVisible()
+  await expect(page.getByLabel('운동 이름')).toBeVisible()
+})
+```
+
+- [ ] **Step 4: 테스트 실행**
+
+Run: `npm run test:e2e`
+Expected: 5 tests passed
+
+실패하면 다음을 순서대로 확인한다.
+- 모의 서버가 4010에서 응답하는지: `curl "http://127.0.0.1:4010/youtube/v3/search?q=스쿼트"`
+- `data-testid` 값이 Task 7·8의 컴포넌트와 일치하는지
+- iframe이 3개가 아니라 9개면 `ShortsFeed`의 `MOUNT_WINDOW` 조건이 잘못된 것이다
+- 스크롤 복원이 실패하면 그리드 높이가 부족해 스크롤이 안 생긴 것이다. `window.scrollY`가 0이면 모의 카탈로그 항목을 더 늘린다.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add tests/e2e playwright.config.ts
+git commit -m "test: 검색부터 피드 재생까지 E2E 테스트 추가"
+```
+
+---
+
+### Task 10: 인기 운동 캐시 시드와 배포
+
+**Files:**
+- Create: `scripts/seed-cache.ts`
+- Modify: `package.json` (`seed` 스크립트 추가)
+- Create: `README.md`
+
+**Interfaces:**
+- Consumes: `POPULAR_EXERCISES` (Task 7), `getVideos` (Task 6)
+- Produces: `npm run seed`
+
+- [ ] **Step 1: 시드 스크립트 작성**
+
+`scripts/seed-cache.ts`:
+
+```ts
+import { POPULAR_EXERCISES } from '../src/data/categories'
+import { getVideos } from '../src/lib/videoSearch'
+
+/**
+ * 인기 운동을 미리 캐시에 채운다.
+ * 검색 1회는 101 units 이므로 20개는 약 2,020 units. 일일 10,000 안에 들어간다.
+ * 쿼터가 소진되면 즉시 멈춘다. 남은 항목은 다음 날 다시 실행한다.
+ */
+async function main() {
+  for (const exercise of POPULAR_EXERCISES) {
+    try {
+      const result = await getVideos(exercise)
+      if (result.quotaExceeded) {
+        console.error(`쿼터 소진. ${exercise} 이후는 건너뜁니다.`)
+        process.exitCode = 1
+        return
+      }
+      console.log(`${exercise}: ${result.videos.length}개 ${result.fromCache ? '(캐시)' : '(신규)'}`)
+    } catch (error) {
+      console.error(`${exercise} 실패:`, error instanceof Error ? error.message : error)
+      process.exitCode = 1
+      return
+    }
+  }
+  console.log('시드 완료')
+}
+
+void main()
+```
+
+- [ ] **Step 2: 스크립트 등록**
+
+`package.json`의 `scripts`에 추가:
+
+```json
+"seed": "tsx --env-file=.env.local scripts/seed-cache.ts"
+```
+
+- [ ] **Step 3: README 작성**
+
+`README.md`:
+
+````markdown
+# 헬스 쇼츠
+
+운동 이름을 검색하면 관련 쇼츠를 웹 내부에서 바로 재생하는 서비스.
+
+설계 문서: `docs/superpowers/specs/2026-07-25-health-shorts-gymwear-design.md`
+
+## 준비
+
+1. `.env.local.example` 을 `.env.local` 로 복사한다.
+2. [Google Cloud Console](https://console.cloud.google.com/)에서 YouTube Data API v3를 켜고 API 키를 발급해 `YOUTUBE_API_KEY` 에 넣는다.
+3. Supabase 프로젝트를 만들고 SQL Editor에서 `supabase/migrations/0001_search_cache.sql` 을 실행한다.
+4. Supabase 프로젝트 설정에서 URL과 `service_role` 키를 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 에 넣는다.
+
+`SUPABASE_*` 를 비워두면 캐시 없이 동작한다. 다만 검색마다 쿼터를 쓰므로 개발 중에는 채워두는 편이 좋다.
+
+## 실행
+
+```bash
+npm run dev        # 개발 서버
+npm test           # 단위 테스트
+npm run test:e2e   # E2E (모의 YouTube 서버를 자동으로 띄운다)
+npm run seed       # 인기 운동 20개 캐시 시드
+```
+
+## 쿼터 주의
+
+YouTube Data API 일일 무료 쿼터는 10,000 units다. 검색 1회에 101 units가 들어가므로 **하루 약 99회**가 상한이다. 캐시가 있으면 같은 검색어는 7일간 쿼터를 쓰지 않는다.
+
+## 배포
+
+Vercel에 GitHub 저장소를 연결하고 환경변수 `YOUTUBE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 를 등록한다. `YOUTUBE_API_BASE` 는 설정하지 않는다 (테스트 전용).
+````
+
+- [ ] **Step 4: 시드가 동작하는지 확인**
+
+`.env.local` 에 실제 키를 채운 뒤:
+
+```bash
+npm run seed
+```
+
+Expected: `스쿼트: 12개 (신규)` 같은 줄이 20개, 마지막에 `시드 완료`
+
+실제 키가 없으면 이 단계를 건너뛰고 Step 5로 간다. 배포 후 Vercel 환경에서 실행한다.
+
+- [ ] **Step 5: 전체 검증**
+
+```bash
+npm test
+npm run test:e2e
+npm run build
+npx tsc --noEmit
+npx next lint
+```
+
+Expected: 모두 통과
+
+- [ ] **Step 6: 커밋과 푸시**
+
+```bash
+git add scripts package.json README.md
+git commit -m "feat: 인기 운동 캐시 시드 스크립트와 실행 문서 추가"
+git push -u origin main
+```
+
+- [ ] **Step 7: Vercel 배포**
+
+1. [vercel.com](https://vercel.com)에서 `ZIZONJIHUN/HEALTH` 저장소를 import
+2. 환경변수 `YOUTUBE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 등록
+3. 배포 후 폰에서 접속해 검색과 스와이프 재생을 확인
+
+확인 항목:
+- [ ] 검색하면 세로 썸네일 그리드가 나온다
+- [ ] 썸네일을 누르면 전체화면으로 재생된다 (음소거 상태로 시작)
+- [ ] 아래로 스와이프하면 다음 영상으로 넘어간다
+- [ ] 뒤로가기로 그리드의 같은 위치로 돌아온다
+- [ ] 같은 검색어를 다시 검색하면 즉시 나온다 (캐시)
+
+---
+
+## 단계 1 완료 기준
+
+| 항목 | 확인 방법 |
+|---|---|
+| 운동 이름 검색이 동작한다 | E2E `검색하면 쇼츠만 그리드에 나온다` |
+| 180초 넘는 영상이 걸러진다 | 단위 `filterShorts`, E2E 동일 테스트 |
+| 웹 내부에서 재생된다 (외부 이동 없음) | E2E `카드를 누르면 전면 피드에서 재생된다` |
+| 세로 스와이프로 연속 재생된다 | 배포 후 실기기 확인 |
+| 뒤로가기로 위치가 복원된다 | E2E `뒤로가기로 그리드의 스크롤 위치가 복원된다` |
+| 쿼터 초과 시 앱이 죽지 않는다 | E2E `쿼터가 초과되면 배너를 보여주고 화면은 유지된다` |
+| 결과 0개 안내가 나온다 | E2E `결과가 없으면 추천 검색어를 보여준다` |
+| 캐시가 쿼터를 아낀다 | 같은 검색어 2회 실행 시 `fromCache: true` |
+| API 키가 클라이언트에 노출되지 않는다 | `npm run build` 후 `grep -r "YOUTUBE_API_KEY" .next/static` 결과 없음 |
+| 다크 팔레트가 적용된다 | 배포 화면 육안 확인 |
+
+## 이 계획에서 의도적으로 뺀 것
+
+**`youtube.com/shorts/{id}` 리다이렉트로 세로 영상 판별** — 설계 문서 5절이 "있으면 좋은 보정 단계"로 규정한 항목이다. 영상 개수만큼 HTTP 요청이 추가되고 비공식 동작이라 언제든 막힌다. 길이 기준(180초)만으로 실사용 품질이 나오는지 배포 후 확인하고, 가로 영상이 눈에 거슬리는 수준이면 그때 추가한다.
+
+**개별 영상의 임베드 실패 감지와 자동 스킵** — 설계 문서 8절에 있으나 이 계획에는 없다. 부모 페이지는 iframe 내부의 재생 실패를 알 수 없고, 알려면 YouTube IFrame Player API를 붙여 `onError` 콜백을 받아야 한다. 그러면 재생 계층 전체를 다시 설계해야 한다. 대신 `search.list`에 `videoEmbeddable=true`를 넘겨 임베드 금지 영상을 **애초에 결과에서 제외**한다. 실기기에서 재생 안 되는 영상이 실제로 나오면 그때 IFrame Player API 전환을 별도 작업으로 다룬다.
+
+## 단계 2로 넘어갈 때 남는 일
+
+- `BottomTabBar`의 `TABS`에 의류 탭 추가
+- `search_cache` 외 `brands`, `products` 테이블과 RLS
+- 설계 문서 6·7절의 의류 카탈로그와 관리자 화면

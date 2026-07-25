@@ -7,7 +7,7 @@ const DEFAULT_API_BASE = 'https://www.googleapis.com/youtube/v3'
 /** YouTube 일일 쿼터가 소진된 상태. 캐시 폴백으로 전환하는 신호다. */
 export class QuotaExceededError extends Error {
   constructor() {
-    super('YouTube API quota exceeded')
+    super('YouTube API quota or rate limit exceeded')
     this.name = 'QuotaExceededError'
   }
 }
@@ -30,11 +30,25 @@ function apiBase(): string {
   return process.env.YOUTUBE_API_BASE || DEFAULT_API_BASE
 }
 
+/** Google이 "요청을 줄여라"를 알리는 세 가지 이유. */
+const QUOTA_REASONS = ['quotaExceeded', 'rateLimitExceeded', 'userRateLimitExceeded']
+
+/**
+ * 쿼터·레이트리밋 소진인지 판별한다.
+ * Task 6은 이 신호만 잡아 캐시 폴백으로 전환하고 나머지 오류는 실제 실패로 흘린다.
+ * 429는 본문을 보지 않는다 — 429 자체가 레이트리밋이다.
+ */
+export function isQuotaFailure(status: number, body: string): boolean {
+  if (status === 429) return true
+  if (status !== 403) return false
+  return QUOTA_REASONS.some((reason) => body.includes(reason))
+}
+
 async function readJson<T>(response: Response, label: string): Promise<T> {
   if (response.ok) return (await response.json()) as T
 
   const body = await response.text()
-  if (response.status === 403 && body.includes('quotaExceeded')) {
+  if (isQuotaFailure(response.status, body)) {
     throw new QuotaExceededError()
   }
   throw new Error(`YouTube ${label} 호출 실패: ${response.status} ${body}`)

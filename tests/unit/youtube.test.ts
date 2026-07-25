@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { QuotaExceededError, searchShorts } from '@/lib/youtube'
+import { QuotaExceededError, isQuotaFailure, searchShorts } from '@/lib/youtube'
 
 const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
 const VIDEOS = 'https://www.googleapis.com/youtube/v3/videos'
@@ -132,5 +132,61 @@ describe('searchShorts', () => {
     const result = await searchShorts('스쿼트', 'test-key')
 
     expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/default.jpg')
+  })
+
+  it('403 rateLimitExceeded 면 QuotaExceededError를 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'rateLimitExceeded' }] } }, { status: 403 }),
+      ),
+    )
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('429 면 QuotaExceededError를 던진다', async () => {
+    server.use(http.get(SEARCH, () => HttpResponse.json({}, { status: 429 })))
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('쿼터와 무관한 403 은 일반 Error로 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'forbidden' }] } }, { status: 403 }),
+      ),
+    )
+
+    const promise = searchShorts('스쿼트', 'test-key')
+    await expect(promise).rejects.toThrow(/403/)
+    await expect(promise).rejects.not.toBeInstanceOf(QuotaExceededError)
+  })
+})
+
+describe('isQuotaFailure', () => {
+  it('403 + quotaExceeded 는 쿼터 소진이다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"quotaExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + rateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + userRateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(
+      isQuotaFailure(403, '{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}'),
+    ).toBe(true)
+  })
+
+  it('429 는 본문과 무관하게 쿼터 소진이다', () => {
+    expect(isQuotaFailure(429, '')).toBe(true)
+  })
+
+  it('쿼터와 무관한 403 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"forbidden"}]}}')).toBe(false)
+  })
+
+  it('500 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(500, 'quotaExceeded')).toBe(false)
   })
 })

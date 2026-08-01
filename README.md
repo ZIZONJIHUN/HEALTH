@@ -6,10 +6,11 @@
 
 ## 준비
 
-1. `.env.local.example` 을 `.env.local` 로 복사한다.
-2. [Google Cloud Console](https://console.cloud.google.com/)에서 YouTube Data API v3를 켜고 API 키를 발급해 `YOUTUBE_API_KEY` 에 넣는다.
+1. `npm install`
+2. `.env.local.example` 을 `.env.local` 로 복사한다.
+3. [Google Cloud Console](https://console.cloud.google.com/)에서 YouTube Data API v3를 켜고 API 키를 발급해 `YOUTUBE_API_KEY` 에 넣는다.
 
-이 두 단계만으로 앱은 완전히 동작한다. `SUPABASE_*` 는 선택 사항이다.
+이 세 단계만으로 앱은 완전히 동작한다. `SUPABASE_*` 는 선택 사항이다.
 
 ### Supabase는 선택이다
 

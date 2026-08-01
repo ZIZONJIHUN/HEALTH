@@ -2073,6 +2073,161 @@ git commit -m "feat: 캐시 우선 검색 오케스트레이션과 /api/videos �
 
 ---
 
+### Task 6b: 캐시 히트와 stale 폴백을 실제로 검증
+
+**Files:**
+- Modify: `tests/unit/videoSearch.test.ts`
+- Modify: `src/lib/videoSearch.ts`
+
+**Interfaces:**
+- `getVideos`의 시그니처는 그대로다. 쿼터 경로의 `fromCache` 값만 정직해진다
+
+**왜 필요한가**
+
+Task 6 리뷰가 잡은 두 가지 커버리지 구멍이다.
+
+**1. 캐시 히트 분기를 아무 테스트도 지나가지 않는다.** 5개 테스트가 모두 빈 검색어로
+빠지거나, `beforeEach`가 비운 캐시에서 미스를 받거나, 오류로 끝난다. "캐시 우선 검색"의
+핵심 승리 조건 — 네트워크를 건너뛰고 캐시를 반환하는 것 — 이 검증되지 않는다.
+
+**2. 쿼터 테스트가 stale 폴백을 증명하지 못한다.** 만료된 캐시를 심어두지 않으므로
+`readCache(query, { allowStale: true })`는 이 테스트에서 어차피 `null`을 반환한다.
+**폴백 재조회를 아예 생략하고 빈 배열만 반환하는 구현도 똑같이 통과한다.** 이 테스트는
+"stale 데이터가 없을 때의 결과 모양"만 확인하지, 폴백이 일어난다는 것을 확인하지 않는다.
+
+리뷰어는 `await writeCache`를 fire-and-forget으로 바꾸자고 제안했으나 **거절한다.**
+서버리스에서는 응답을 보낸 뒤 떠 있는 프로미스가 완료된다는 보장이 없다. `await`를 빼면
+인스턴스가 얼어붙어 캐시가 영영 기록되지 않을 수 있고, 그러면 캐시의 존재 이유가 사라진다.
+지연을 감수하는 쪽이 맞다. 대신 이유를 주석으로 남겨 다음 사람이 같은 제안을 반복하지
+않게 한다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/videoSearch.test.ts`의 import에 `writeCache`와 `CACHE_TTL_MS`를 추가하고
+(`@/lib/searchCache`에서), `vi`를 `vitest`에서 가져온다. 아래 두 테스트를
+`describe('getVideos', ...)` 안에 추가한다.
+
+```ts
+  it('캐시에 있으면 YouTube를 호출하지 않는다', async () => {
+    // MSW 핸들러를 등록하지 않는다.
+    // onUnhandledRequest: 'error' 이므로 요청이 나가면 이 테스트가 실패한다.
+    const videos = [
+      {
+        id: 'cached',
+        title: '캐시된 스쿼트',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/cached/hqdefault.jpg',
+        durationSeconds: 45,
+      },
+    ]
+    await writeCache('스쿼트', videos)
+
+    const result = await getVideos('스쿼트')
+
+    expect(result).toEqual({
+      query: '스쿼트',
+      videos,
+      fromCache: true,
+      quotaExceeded: false,
+    })
+  })
+
+  it('쿼터 초과면 만료된 캐시라도 꺼내 온다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'quotaExceeded' }] } }, { status: 403 }),
+      ),
+    )
+    const videos = [
+      {
+        id: 'stale',
+        title: '오래된 스쿼트',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/stale/hqdefault.jpg',
+        durationSeconds: 50,
+      },
+    ]
+    await writeCache('스쿼트', videos)
+
+    // TTL을 넘긴 시점으로 이동한다. Date만 가짜로 바꿔 MSW의 비동기 처리를 건드리지 않는다.
+    const realNow = Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(realNow + CACHE_TTL_MS + 1)
+
+    try {
+      const result = await getVideos('스쿼트')
+
+      // 첫 readCache 는 만료로 null → searchShorts 403 → allowStale 재조회로 살아난다.
+      // 폴백 재조회를 생략한 구현이면 videos 가 [] 라 이 단정이 실패한다.
+      expect(result.videos).toEqual(videos)
+      expect(result.quotaExceeded).toBe(true)
+      expect(result.fromCache).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/videoSearch.test.ts`
+Expected: 두 테스트 모두 실패한다. 첫 번째는 `writeCache`/`CACHE_TTL_MS` import가 없어
+해석 실패, 추가한 뒤에는 통과할 수도 있다 — 그렇다면 **캐시 히트 경로가 원래 맞게
+동작한다는 뜻이므로 정상이다.** 두 번째는 현재 구현에서 통과해야 한다. 두 테스트의 목적은
+버그를 드러내는 것이 아니라 **이미 맞는 동작에 회귀 방지막을 씌우는 것**이다.
+
+다만 Step 3의 `fromCache` 수정 전에는, stale이 없는 기존 쿼터 테스트가
+`fromCache: true`를 기대하고 있으므로 그 테스트는 Step 3 이후 조정이 필요할 수 있다.
+실행해서 확인하고 필요한 만큼만 고친다.
+
+- [ ] **Step 3: 쿼터 경로의 fromCache를 정직하게 만들기**
+
+`src/lib/videoSearch.ts`의 쿼터 폴백 반환을 수정한다.
+
+```ts
+    const stale = await readCache(query, { allowStale: true })
+    // stale 이 없으면 캐시에서 온 것이 아니다. 빈 결과에 "캐시됨"을 붙이면
+    // UI가 "저장된 결과를 보여준다"고 잘못 안내하게 된다.
+    return { query, videos: stale ?? [], fromCache: stale !== null, quotaExceeded: true }
+```
+
+기존 쿼터 테스트(`'쿼터 초과면 quotaExceeded를 표시하고 던지지 않는다'`)가
+`fromCache`를 단정하고 있다면 `false`로 맞춘다 — 그 테스트에는 stale 데이터가 없다.
+
+- [ ] **Step 4: await writeCache 의 이유를 주석으로 남기기**
+
+```ts
+    // 서버리스에서는 응답을 보낸 뒤 떠 있는 프로미스가 완료된다는 보장이 없다.
+    // await 를 빼면 인스턴스가 얼어붙어 캐시가 영영 기록되지 않을 수 있고,
+    // 그러면 쿼터를 아끼려던 캐시의 존재 이유가 사라진다. 지연을 감수한다.
+    await writeCache(query, videos)
+```
+
+- [ ] **Step 5: 전체 확인**
+
+시작 전 `npm test`로 현재 개수를 확인하고 그 값에 **2**를 더한 수를 기대한다.
+
+Run: `npm test`
+Expected: PASS — 기준선 + 2. 출력 깨끗.
+
+Run: `npx tsc --noEmit`
+Expected: 클린
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add tests/unit/videoSearch.test.ts src/lib/videoSearch.ts
+git commit -m "test: 캐시 히트와 stale 폴백을 실제로 검증
+
+캐시 우선 검색의 핵심 승리 조건(네트워크를 건너뛰고 캐시 반환)을 어떤 테스트도
+지나가지 않았다. 쿼터 테스트도 만료된 캐시를 심지 않아 폴백 재조회를 생략한
+구현이 똑같이 통과했다.
+
+쿼터 경로의 fromCache 가 stale 유무와 무관하게 true 였던 것도 함께 고쳤다."
+```
+
+---
+
 ### Task 7: 운동 탭 화면
 
 **Files:**

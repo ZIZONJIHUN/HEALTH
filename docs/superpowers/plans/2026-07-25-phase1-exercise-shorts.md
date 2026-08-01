@@ -12,6 +12,11 @@
 
 - 다크 전용. 라이트모드 토글을 만들지 않는다.
 - 팔레트 (Tailwind 테마 토큰으로 등록): 배경 `#0B0D10`, 카드 `#14171C`, 카드2 `#1C2027`, 경계 `#262B33`, 본문 `#E8EBF0`, 보조 `#8A929E`, 강조 `#C8FF3D`, 경고 `#FF5A5F`
+- **예외: 영상 위 스크림은 `black`을 쓴다.** 재생시간 배지 배경(`bg-black/70`), 피드 하단
+  그라데이션(`from-black/85`), 뒤로가기 버튼 배경(`bg-black/60`)이 해당한다. 팔레트 토큰은
+  앱 UI의 색을 통일하기 위한 것이고, 임의의 영상 프레임 위에 깔리는 반투명 층은 성격이
+  다르다. `surface`(#14171C)를 70%로 깔면 푸른 기가 묻어나 영상 색이 왜곡된다. 스크림은
+  중립 검정이어야 한다. 토큰 8개 제약은 **불투명한 UI 표면**에만 적용된다.
 - `YOUTUBE_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`는 서버 모듈에서만 읽는다. `'use client'` 파일이나 `NEXT_PUBLIC_` 접두사에 절대 넣지 않는다.
 - 쇼츠 판정: 실제 길이 **180초 이하**, 그리고 0초 초과 (0초는 라이브 스트림)
 - `search.list` 파라미터: `type=video`, `videoDuration=short`, `videoEmbeddable=true`, `regionCode=KR`, `relevanceLanguage=ko`, `maxResults=25`

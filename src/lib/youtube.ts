@@ -54,8 +54,18 @@ async function readJson<T>(response: Response, label: string): Promise<T> {
   throw new Error(`YouTube ${label} 호출 실패: ${response.status} ${body}`)
 }
 
-function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails']): string {
-  return thumbnails.high?.url ?? thumbnails.medium?.url ?? thumbnails.default?.url ?? ''
+/**
+ * high → medium → default 순으로 고르고, 셋 다 없으면 영상 ID로 URL을 만든다.
+ * hqdefault.jpg 는 모든 영상 ID에 대해 유효하므로 빈 문자열을 반환할 일이 없다.
+ * 빈 src 는 예외를 던지지 않고 깨진 이미지 칸으로 남아 조용히 나쁘다.
+ */
+function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails'], videoId: string): string {
+  return (
+    thumbnails.high?.url ??
+    thumbnails.medium?.url ??
+    thumbnails.default?.url ??
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+  )
 }
 
 /**
@@ -98,7 +108,7 @@ export async function searchShorts(query: string, apiKey: string): Promise<Short
     id: item.id,
     title: item.snippet.title,
     channelTitle: item.snippet.channelTitle,
-    thumbnailUrl: pickThumbnail(item.snippet.thumbnails),
+    thumbnailUrl: pickThumbnail(item.snippet.thumbnails, item.id),
     durationSeconds: parseIso8601Duration(item.contentDetails.duration) ?? 0,
   }))
 

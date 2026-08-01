@@ -49,3 +49,10 @@ test('쿼터가 초과되면 배너를 보여주고 화면은 유지된다', asy
   await expect(page.getByTestId('quota-banner')).toBeVisible()
   await expect(page.getByLabel('운동 이름')).toBeVisible()
 })
+
+test('쿼터 외의 오류는 재시도 화면을 보여준다', async ({ page }) => {
+  await page.goto('/?q=서버오류')
+
+  await expect(page.getByTestId('error-state')).toBeVisible()
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible()
+})

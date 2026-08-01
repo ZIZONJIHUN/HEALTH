@@ -134,6 +134,27 @@ describe('searchShorts', () => {
     expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/default.jpg')
   })
 
+  it('썸네일이 하나도 없으면 영상 ID로 URL을 만든다', async () => {
+    server.use(
+      http.get(SEARCH, () => HttpResponse.json({ items: [{ id: { videoId: 'a' } }] })),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'a',
+              snippet: { title: '제목 a', channelTitle: '헬스톡', thumbnails: {} },
+              contentDetails: { duration: 'PT30S' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const result = await searchShorts('스쿼트', 'test-key')
+
+    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/hqdefault.jpg')
+  })
+
   it('403 rateLimitExceeded 면 QuotaExceededError를 던진다', async () => {
     server.use(
       http.get(SEARCH, () =>

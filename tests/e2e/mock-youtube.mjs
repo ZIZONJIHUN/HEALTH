@@ -35,6 +35,12 @@ const server = createServer((req, res) => {
   const query = url.searchParams.get('q') ?? ''
   res.setHeader('content-type', 'application/json')
 
+  if (query.includes('서버오류')) {
+    res.statusCode = 500
+    res.end(JSON.stringify({ error: { message: 'internal error' } }))
+    return
+  }
+
   if (query.includes('쿼터초과')) {
     res.statusCode = 403
     res.end(JSON.stringify({ error: { errors: [{ reason: 'quotaExceeded' }] } }))

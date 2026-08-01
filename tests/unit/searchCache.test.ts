@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_TTL_MS, clearMemoryCache, isCacheFresh, readCache, writeCache } from '@/lib/searchCache'
 
 const NOW = new Date('2026-07-25T00:00:00.000Z').getTime()
@@ -85,5 +85,46 @@ describe('Supabase 환경변수가 없을 때', () => {
     const later = Date.now() + CACHE_TTL_MS + 1
 
     await expect(readCache('스쿼트', { allowStale: true, now: later })).resolves.toEqual([])
+  })
+})
+
+describe('Supabase 호출이 실패할 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    // 도달할 수 없는 호스트를 가리켜 호출을 실패시킨다.
+    process.env.SUPABASE_URL = 'http://127.0.0.1:1'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    else delete process.env.SUPABASE_URL
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+    else delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    vi.restoreAllMocks()
+  })
+
+  it('읽기 실패는 null을 반환하고 예외를 던지지 않는다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  }, 15000)
+
+  it('읽기 실패를 경고로 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await readCache('스쿼트')
+
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]?.[0])).toContain('search_cache')
+  }, 15000)
+
+  it('쓰기 실패는 조용히 성공하고 경고를 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalled()
   })
 })

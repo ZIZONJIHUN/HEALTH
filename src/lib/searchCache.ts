@@ -17,6 +17,17 @@ function getClient(): SupabaseClient | null {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
+/**
+ * 캐시 장애를 서버 로그로만 남긴다.
+ * 사용자에게 보이는 동작은 바꾸지 않는다 — 캐시는 성능 최적화이지 정확성 의존성이 아니다.
+ * 로그가 없으면 컬럼명 오타나 마이그레이션 미실행으로 캐시가 완전히 죽어도
+ * 앱은 정상 동작하는 것처럼 보이고 쿼터만 태운다.
+ */
+function warnCacheFailure(operation: string, cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  console.warn(`[search_cache] ${operation} 실패 — 캐시를 건너뜁니다: ${reason}`)
+}
+
 export function isCacheFresh(createdAt: string, now: number): boolean {
   const created = new Date(createdAt).getTime()
   if (Number.isNaN(created)) return false
@@ -70,10 +81,15 @@ export async function readCache(
       .eq('query_key', key)
       .maybeSingle()
 
-    if (error || !data) return null
+    if (error) {
+      warnCacheFailure('읽기', error.message)
+      return null
+    }
+    if (!data) return null
     if (!allowStale && !isCacheFresh(data.created_at as string, now)) return null
     return data.payload as ShortVideo[]
-  } catch {
+  } catch (cause) {
+    warnCacheFailure('읽기', cause)
     return null
   }
 }
@@ -89,12 +105,14 @@ export async function writeCache(query: string, videos: ShortVideo[]): Promise<v
   }
 
   try {
-    await client.from(TABLE).upsert({
+    const { error } = await client.from(TABLE).upsert({
       query_key: key,
       payload: videos,
       created_at: new Date().toISOString(),
     })
-  } catch {
-    // 캐시 쓰기 실패는 사용자에게 영향이 없다.
+
+    if (error) warnCacheFailure('쓰기', error.message)
+  } catch (cause) {
+    warnCacheFailure('쓰기', cause)
   }
 }

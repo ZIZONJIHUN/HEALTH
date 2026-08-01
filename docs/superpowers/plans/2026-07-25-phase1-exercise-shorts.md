@@ -3066,6 +3066,142 @@ git push -u origin main
 
 ---
 
+### Task 11: 마무리 정리
+
+**Files:**
+- Modify: `tests/e2e/mock-youtube.mjs`
+- Modify: `tests/e2e/search-feed.spec.ts`
+- Modify: `src/lib/youtube.ts`
+- Modify: `tests/unit/youtube.test.ts`
+- Delete: `public/*.svg` (스캐폴드 잔여물)
+
+**왜 필요한가**
+
+리뷰가 태스크를 가로질러 반복 지적한 두 가지와, 스캐폴드 잔여물을 한 번에 정리한다.
+
+**1. `error-state`에 커버리지가 없다.** Task 9 리뷰의 지적이다. 여섯 개 `data-testid` 중
+`video-card`, `empty-state`, `quota-banner`, `feed-slide`, `back-button`은 전부 E2E가
+지나가지만 `error-state`만 없다. 이건 쿼터가 아닌 오류(네트워크 실패, YouTube 500 등)에서
+나오는 재시도 화면이고, Task 4b에서 확인했듯 그 경로는 쿼터 경로와 **다르게** 동작한다.
+검증 없이 남기면 재시도 버튼이 실제로 복구시키는지 아무도 모른다.
+
+**2. 빈 썸네일 URL.** Task 4와 Task 7 리뷰가 각각 지적했다. `pickThumbnail`이 high/medium/
+default를 모두 못 찾으면 `''`를 반환하고, 그 칸은 깨진 이미지가 된다. 영상 ID만 있으면
+`https://i.ytimg.com/vi/{id}/hqdefault.jpg`가 항상 유효하므로 결정적 폴백이 가능하다.
+
+- [ ] **Step 1: 모의 서버에 오류 케이스 추가**
+
+`tests/e2e/mock-youtube.mjs`에서 `쿼터초과` 처리 **위에** 추가한다. 쿼터 판별 대상이
+아닌 500을 반환해 일반 오류 경로를 태운다.
+
+```js
+  if (query.includes('서버오류')) {
+    res.statusCode = 500
+    res.end(JSON.stringify({ error: { message: 'internal error' } }))
+    return
+  }
+```
+
+- [ ] **Step 2: 실패하는 E2E 추가**
+
+`tests/e2e/search-feed.spec.ts` 맨 아래에 추가한다.
+
+```ts
+test('쿼터 외의 오류는 재시도 화면을 보여준다', async ({ page }) => {
+  await page.goto('/?q=서버오류')
+
+  await expect(page.getByTestId('error-state')).toBeVisible()
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible()
+})
+```
+
+- [ ] **Step 3: 확인**
+
+Run: `npm run test:e2e`
+Expected: 6 passed
+
+`error-state`가 안 나오고 Next의 기본 오류 화면이 뜨면 `(tabs)/error.tsx`가 이 경로를
+잡지 못하는 것이다. **그건 진짜 버그이므로 테스트를 고치지 말고 보고한다.**
+
+- [ ] **Step 4: 빈 썸네일에 결정적 폴백**
+
+`src/lib/youtube.ts`의 `pickThumbnail`은 `item.id`를 모르므로 시그니처를 바꾼다.
+
+```ts
+/**
+ * high → medium → default 순으로 고르고, 셋 다 없으면 영상 ID로 URL을 만든다.
+ * hqdefault.jpg 는 모든 영상 ID에 대해 유효하므로 빈 문자열을 반환할 일이 없다.
+ * 빈 src 는 예외를 던지지 않고 깨진 이미지 칸으로 남아 조용히 나쁘다.
+ */
+function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails'], videoId: string): string {
+  return (
+    thumbnails.high?.url ??
+    thumbnails.medium?.url ??
+    thumbnails.default?.url ??
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+  )
+}
+```
+
+호출부를 `pickThumbnail(item.snippet.thumbnails, item.id)`로 바꾼다.
+
+- [ ] **Step 5: 폴백 단위 테스트 추가**
+
+`tests/unit/youtube.test.ts`의 `describe('searchShorts', ...)`에 추가한다.
+
+```ts
+  it('썸네일이 하나도 없으면 영상 ID로 URL을 만든다', async () => {
+    server.use(
+      http.get(SEARCH, () => HttpResponse.json({ items: [{ id: { videoId: 'a' } }] })),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'a',
+              snippet: { title: '제목 a', channelTitle: '헬스톡', thumbnails: {} },
+              contentDetails: { duration: 'PT30S' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const result = await searchShorts('스쿼트', 'test-key')
+
+    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/hqdefault.jpg')
+  })
+```
+
+- [ ] **Step 6: 스캐폴드 잔여물 정리**
+
+`public/` 안의 `create-next-app` 기본 SVG들(`next.svg`, `vercel.svg`, `file.svg`,
+`globe.svg`, `window.svg` 등)은 어디서도 참조되지 않는다. 지운다.
+
+`AGENTS.md`와 `CLAUDE.md`는 **남긴다.** Next 16이 번들 문서를 읽으라고 안내하는 내용이라
+이 저장소에서 실제로 유용했다.
+
+- [ ] **Step 7: 전체 확인**
+
+Run: `npm test` → 기존 개수 + 1
+Run: `npm run test:e2e` → 6 passed
+Run: `npm run build`, `npx tsc --noEmit`, `npm run lint` → 전부 클린
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add -A
+git commit -m "fix: error-state E2E 커버리지와 결정적 썸네일 폴백 추가
+
+리뷰가 태스크를 가로질러 반복 지적한 둘을 정리한다.
+
+- error-state 만 E2E 가 지나가지 않았다. 쿼터가 아닌 오류의 재시도 화면이라
+  쿼터 경로와 다르게 동작하는데 검증이 없었다.
+- pickThumbnail 이 빈 문자열을 반환할 수 있어 깨진 이미지 칸이 된다.
+  hqdefault.jpg 는 모든 영상 ID에 유효하므로 결정적 폴백이 가능하다."
+```
+
+---
+
 ## 단계 1 완료 기준
 
 | 항목 | 확인 방법 |

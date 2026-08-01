@@ -1548,6 +1548,130 @@ git commit -m "feat: 캐시 장애를 서버 로그와 왕복 검증 스크립�
 
 ---
 
+### Task 5d: 캐시 테스트를 MSW로 바꿔 14초를 되찾고 성공 경로를 검증
+
+**Files:**
+- Modify: `tests/unit/searchCache.test.ts`
+
+**Interfaces:**
+- 소스 코드는 바꾸지 않는다. `src/lib/searchCache.ts`는 그대로다
+- 이 태스크는 **조사가 필요하다.** 아래 코드는 출발점이지 받아쓸 정답이 아니다
+
+**왜 필요한가**
+
+두 가지를 한 번에 해결한다.
+
+**1. 테스트가 14초 느리다.** Task 5c의 실패 테스트는 `SUPABASE_URL`을
+`http://127.0.0.1:1`로 두어 실제 연결을 시도한다. 측정 결과:
+
+```
+읽기 실패는 null을 반환하고 예외를 던지지 않는다   7072ms
+읽기 실패를 경고로 남긴다                        7040ms
+쓰기 실패는 조용히 성공하고 경고를 남긴다             8ms
+```
+
+전체 스위트가 891ms에서 15.8초가 됐다. 남은 태스크마다 이 비용을 낸다.
+
+**2. Supabase 성공 경로에 테스트가 없다.** Task 5 리뷰의 Important 지적이다.
+`.from(TABLE).select('payload, created_at').eq('query_key', key).maybeSingle()`이
+정말 올바른 요청을 만드는지, `upsert` 본문이 맞는지 아무것도 검증하지 않는다.
+모든 오류를 삼키는 설계라 테이블명이나 컬럼명이 틀려도 조용히 죽는다.
+
+MSW로 Supabase REST 엔드포인트를 가로채면 둘 다 해결된다. 즉시 응답하므로 빠르고,
+**우리가 실제로 보내는 URL·쿼리·본문을 검증**하므로 성공 경로가 덮인다.
+
+- [ ] **Step 1: 실제 요청 모양을 확인한다**
+
+`@supabase/supabase-js`가 어떤 HTTP 요청을 만드는지 먼저 관찰한다. 추측하지 말고 찍어본다.
+임시 테스트를 하나 만들어 MSW로 모든 요청을 가로채고 URL·메서드·헤더·본문을 출력한다.
+
+```ts
+server.use(
+  http.all('http://supabase.test/*', async ({ request }) => {
+    console.log(request.method, request.url)
+    console.log('accept:', request.headers.get('accept'))
+    if (request.method !== 'GET') console.log('body:', await request.clone().text())
+    return HttpResponse.json([])
+  }),
+)
+```
+
+`readCache`와 `writeCache`를 한 번씩 호출해 출력을 확인하고, **관찰한 내용을 보고서에
+그대로 기록한다.** 특히 `maybeSingle()`이 보내는 `Accept` 헤더와, 그것이 응답을 배열로
+기대하는지 단일 객체로 기대하는지 확인한다. 이 관찰 결과가 Step 2의 응답 모양을 결정한다.
+확인 후 임시 테스트는 지운다.
+
+- [ ] **Step 2: 실패 테스트를 MSW로 교체**
+
+`tests/unit/searchCache.test.ts`의 `describe('Supabase 호출이 실패할 때', ...)` 블록을
+MSW 기반으로 바꾼다. 파일 상단에 MSW 서버를 세운다.
+
+```ts
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+
+const SUPABASE_URL = 'http://supabase.test'
+const CACHE_ENDPOINT = `${SUPABASE_URL}/rest/v1/search_cache`
+
+const server = setupServer()
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+```
+
+실패 블록의 `beforeEach`에서 환경변수를 `SUPABASE_URL`로 설정하고 핸들러가
+`HttpResponse.error()`(네트워크 오류 시뮬레이션)를 반환하게 한다. 기존 3개 테스트의
+단정(`null` 반환, `console.warn` 호출, `undefined` 반환)은 그대로 유지한다.
+
+- [ ] **Step 3: 실패 테스트가 빨라졌는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts --reporter=verbose`
+Expected: 세 개의 실패 테스트가 각각 **100ms 미만**. 파일 전체가 1초 미만.
+
+7초짜리가 남아 있으면 MSW가 요청을 가로채지 못하고 실제 네트워크로 나간 것이다.
+`onUnhandledRequest: 'error'`가 켜져 있으면 그 경우 테스트가 실패하므로 바로 드러난다.
+
+- [ ] **Step 4: 성공 경로 테스트 추가**
+
+새 `describe('Supabase가 정상일 때', ...)` 블록을 추가한다. Step 1에서 관찰한 실제 요청
+모양에 맞춰 작성한다. 다음 네 가지를 덮는다.
+
+1. **읽기가 저장된 결과를 반환한다** — 핸들러가 신선한 `created_at`과 `ShortVideo` 배열
+   payload를 담은 행을 반환하면 `readCache`가 그 배열을 그대로 돌려준다
+2. **올바른 테이블과 쿼리로 요청한다** — 핸들러에서 요청 URL을 붙잡아 경로가
+   `/rest/v1/search_cache`이고, `select`에 `payload`와 `created_at`이 들어 있고,
+   `query_key` 필터가 **정규화된** 검색어(`'  스쿼트  '` → `'스쿼트'`)인지 단정한다
+3. **TTL이 지난 행은 null을 반환한다** — 8일 전 `created_at`을 반환하는 핸들러.
+   `allowStale: true`면 같은 행을 돌려준다
+4. **쓰기가 올바른 본문을 보낸다** — 핸들러에서 POST 본문을 파싱해 `query_key`가
+   정규화돼 있고 `payload`가 넘긴 배열과 같은지 단정한다
+
+2번과 4번이 이 태스크의 핵심이다. 테이블명·컬럼명 오타를 잡는 유일한 자동 검증이다.
+
+- [ ] **Step 5: 전체 확인**
+
+Run: `npm test`
+Expected: PASS — 59 tests passed (기존 55 + 성공 경로 4개). 출력 깨끗.
+**전체 소요 시간이 2초 미만인지 확인한다.**
+
+Run: `npx tsc --noEmit`
+Expected: 클린
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add tests/unit/searchCache.test.ts
+git commit -m "test: 캐시 테스트를 MSW로 바꿔 14초 단축하고 Supabase 성공 경로 검증
+
+도달 불가 포트로 실제 연결을 시도하던 실패 테스트가 각각 7초씩 걸렸다.
+MSW로 가로채면 즉시 응답하고, 동시에 우리가 보내는 URL·쿼리·본문을 검증하므로
+테이블명·컬럼명 오타를 잡는 자동 검증이 생긴다. 모든 오류를 삼키는 설계라
+그 오타는 지금까지 조용히 캐시를 죽이기만 했다."
+```
+
+---
+
 ### Task 4b: 레이트리밋도 쿼터 소진으로 판별
 
 **Files:**

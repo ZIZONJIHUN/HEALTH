@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "cache:check": "tsx --env-file=.env.local scripts/check-cache.ts"
+    "cache:check": "tsx --env-file=.env.local scripts/check-cache.ts",
+    "seed": "tsx --env-file=.env.local scripts/seed-cache.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",

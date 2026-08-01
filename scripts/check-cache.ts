@@ -1,4 +1,23 @@
+import { createClient } from '@supabase/supabase-js'
+import { normalizeQuery } from '../src/lib/cacheKey'
 import { readCache, writeCache } from '../src/lib/searchCache'
+
+/**
+ * 탐침 행을 정리한다. getClient()는 searchCache.ts 내부 전용이라 여기서는
+ * createClient로 별도 클라이언트를 만든다. 정리 실패는 검증 결과를 뒤집지 않으므로
+ * 오류는 무시한다.
+ */
+async function deleteProbe(queryKey: string): Promise<void> {
+  try {
+    const url = process.env.SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) return
+    const client = createClient(url, key, { auth: { persistSession: false } })
+    await client.from('search_cache').delete().eq('query_key', normalizeQuery(queryKey))
+  } catch {
+    // 정리 실패는 무시한다.
+  }
+}
 
 /**
  * 실제 Supabase에 쓰고 읽어서 캐시가 정말 동작하는지 확인한다.
@@ -41,6 +60,7 @@ async function main() {
     return
   }
 
+  await deleteProbe(probeQuery)
   console.log('성공: 캐시 쓰기와 읽기가 정상입니다.')
 }
 

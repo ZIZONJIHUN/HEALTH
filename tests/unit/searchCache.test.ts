@@ -1,10 +1,34 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_TTL_MS, clearMemoryCache, isCacheFresh, readCache, writeCache } from '@/lib/searchCache'
+import type { ShortVideo } from '@/lib/types'
 
 const NOW = new Date('2026-07-25T00:00:00.000Z').getTime()
 
 function daysAgo(days: number): string {
   return new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
+const SUPABASE_URL = 'http://supabase.test'
+const CACHE_ENDPOINT = `${SUPABASE_URL}/rest/v1/search_cache`
+
+const server = setupServer()
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+function sampleVideos(): ShortVideo[] {
+  return [
+    {
+      id: 'a',
+      title: '스쿼트 기본',
+      channelTitle: '헬스톡',
+      thumbnailUrl: 'https://i.ytimg.com/vi/a/hqdefault.jpg',
+      durationSeconds: 45,
+    },
+  ]
 }
 
 describe('isCacheFresh', () => {
@@ -92,10 +116,22 @@ describe('Supabase 호출이 실패할 때', () => {
   const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
 
   beforeEach(() => {
-    // 도달할 수 없는 호스트를 가리켜 호출을 실패시킨다.
-    process.env.SUPABASE_URL = 'http://127.0.0.1:1'
+    process.env.SUPABASE_URL = SUPABASE_URL
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
     clearMemoryCache()
+    // PostgREST 오류 응답(4xx/5xx)으로 실패를 시뮬레이션한다.
+    // HttpResponse.error()(연결 자체 실패)를 쓰면 postgrest-js가 GET/HEAD/OPTIONS에 대해
+    // 지수 백오프 재시도(1s+2s+4s ≈ 7s)를 실행해 이 테스트가 다시 느려진다 — 이게 바로
+    // Task 5c의 7초 테스트가 실제로 걸린 이유였다. 500 응답은 재시도 대상 상태 코드
+    // ([520, 503])가 아니므로 즉시 실패해 재시도를 유발하지 않는다.
+    server.use(
+      http.all(CACHE_ENDPOINT, () =>
+        HttpResponse.json(
+          { message: 'relation "search_cache" does not exist', code: '42P01', details: null, hint: null },
+          { status: 500 },
+        ),
+      ),
+    )
   })
 
   afterEach(() => {
@@ -110,7 +146,7 @@ describe('Supabase 호출이 실패할 때', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await expect(readCache('스쿼트')).resolves.toBeNull()
-  }, 15000)
+  })
 
   it('읽기 실패를 경고로 남긴다', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -119,12 +155,95 @@ describe('Supabase 호출이 실패할 때', () => {
 
     expect(warn).toHaveBeenCalled()
     expect(String(warn.mock.calls[0]?.[0])).toContain('search_cache')
-  }, 15000)
+  })
 
   it('쓰기 실패는 조용히 성공하고 경고를 남긴다', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
     expect(warn).toHaveBeenCalled()
+  })
+})
+
+describe('Supabase가 정상일 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    process.env.SUPABASE_URL = SUPABASE_URL
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    else delete process.env.SUPABASE_URL
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+    else delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    vi.restoreAllMocks()
+  })
+
+  it('읽기가 저장된 결과를 반환한다', async () => {
+    const videos = sampleVideos()
+    server.use(
+      http.get(CACHE_ENDPOINT, () =>
+        // PostgREST는 select 결과를 배열로 돌려준다. maybeSingle()은 클라이언트 쪽에서
+        // 그 배열을 풀어 단일 행(또는 null)으로 만든다.
+        HttpResponse.json([{ payload: videos, created_at: daysAgo(0) }]),
+      ),
+    )
+
+    // now를 명시해 실제 벽시계 시각과 무관하게 TTL 판정을 고정한다.
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toEqual(videos)
+  })
+
+  it('올바른 테이블과 쿼리로 요청한다', async () => {
+    let capturedUrl: URL | undefined
+    server.use(
+      http.get(CACHE_ENDPOINT, ({ request }) => {
+        capturedUrl = new URL(request.url)
+        return HttpResponse.json([])
+      }),
+    )
+
+    await readCache('  스쿼트  ')
+
+    expect(capturedUrl?.pathname).toBe('/rest/v1/search_cache')
+    expect(capturedUrl?.searchParams.get('select')).toBe('payload,created_at')
+    expect(capturedUrl?.searchParams.get('query_key')).toBe('eq.스쿼트')
+  })
+
+  it('TTL이 지난 행은 null을 반환한다', async () => {
+    const videos = sampleVideos()
+    server.use(
+      http.get(CACHE_ENDPOINT, () => HttpResponse.json([{ payload: videos, created_at: daysAgo(8) }])),
+    )
+
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toBeNull()
+    await expect(readCache('스쿼트', { allowStale: true, now: NOW })).resolves.toEqual(videos)
+  })
+
+  it('쓰기가 올바른 본문을 보낸다', async () => {
+    const videos = sampleVideos()
+    let capturedBody: { query_key?: string; payload?: unknown } | undefined
+    server.use(
+      http.post(CACHE_ENDPOINT, async ({ request }) => {
+        capturedBody = (await request.json()) as { query_key?: string; payload?: unknown }
+        return HttpResponse.json([])
+      }),
+    )
+
+    await writeCache('  스쿼트  ', videos)
+
+    expect(capturedBody?.query_key).toBe('스쿼트')
+    expect(capturedBody?.payload).toEqual(videos)
+  })
+
+  it('행이 없으면 null을 반환하고 경고하지 않는다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    server.use(http.get(CACHE_ENDPOINT, () => HttpResponse.json([])))
+
+    await expect(readCache('없는운동')).resolves.toBeNull()
+
+    expect(warn).not.toHaveBeenCalled()
   })
 })

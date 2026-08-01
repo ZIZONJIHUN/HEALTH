@@ -94,7 +94,7 @@ export async function readCache(
   }
 }
 
-/** 검색 결과를 캐시에 저장한다. 실패는 무시한다. */
+/** 검색 결과를 캐시에 저장한다. 실패는 로그만 남기고 삼킨다. */
 export async function writeCache(query: string, videos: ShortVideo[]): Promise<void> {
   const client = getClient()
   const key = normalizeQuery(query)

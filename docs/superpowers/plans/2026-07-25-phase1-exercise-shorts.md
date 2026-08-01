@@ -1552,9 +1552,11 @@ git commit -m "feat: 캐시 장애를 서버 로그와 왕복 검증 스크립�
 
 **Files:**
 - Modify: `tests/unit/searchCache.test.ts`
+- Modify: `src/lib/searchCache.ts` (주석 한 줄만)
+- Modify: `scripts/check-cache.ts` (탐침 행 정리)
 
 **Interfaces:**
-- 소스 코드는 바꾸지 않는다. `src/lib/searchCache.ts`는 그대로다
+- `searchCache.ts`의 동작은 바꾸지 않는다. 낡은 주석 한 줄만 고친다
 - 이 태스크는 **조사가 필요하다.** 아래 코드는 출발점이지 받아쓸 정답이 아니다
 
 **왜 필요한가**
@@ -1649,19 +1651,64 @@ Expected: 세 개의 실패 테스트가 각각 **100ms 미만**. 파일 전체�
 
 2번과 4번이 이 태스크의 핵심이다. 테이블명·컬럼명 오타를 잡는 유일한 자동 검증이다.
 
-- [ ] **Step 5: 전체 확인**
+- [ ] **Step 5: 캐시 미스가 조용한지 검증하는 테스트 추가**
+
+Task 5c 리뷰의 지적이다. `readCache`는 `error`가 있을 때만 경고하고 행이 없을 때
+(`!data`)는 조용해야 한다. 캐시 미스는 장애가 아니라 첫 검색마다 일어나는 일이라,
+여기서 로그를 남기면 콘솔이 범람한다. 코드는 맞지만 이를 지키는 테스트가 없어
+나중에 리팩터링하면서 되살아나도 아무도 모른다.
+
+`describe('Supabase가 정상일 때', ...)`에 추가한다.
+
+```ts
+  it('행이 없으면 null을 반환하고 경고하지 않는다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 핸들러가 "행 없음"을 반환하도록 설정한다 (Step 1에서 관찰한 형태로).
+
+    await expect(readCache('없는운동')).resolves.toBeNull()
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+```
+
+- [ ] **Step 6: 낡은 주석과 탐침 행 정리**
+
+`src/lib/searchCache.ts`의 `writeCache` 위 주석이 실제 동작과 어긋난다.
+Task 5c에서 실패를 로그로 남기게 됐으므로 "실패는 무시한다"는 더 이상 정확하지 않다.
+
+```ts
+/** 검색 결과를 캐시에 저장한다. 실패는 로그만 남기고 삼킨다. */
+```
+
+`scripts/check-cache.ts`가 `__cache_check__` 행을 프로덕션 테이블에 남긴다.
+고정 키라 무한히 쌓이지는 않지만, 성공 후 지우는 편이 깔끔하다. 성공 경로 마지막,
+"성공" 출력 직전에 정리를 넣는다. 정리 실패는 검증 결과를 뒤집지 않는다.
+
+```ts
+  await deleteProbe(probeQuery)
+  console.log('성공: 캐시 쓰기와 읽기가 정상입니다.')
+```
+
+`deleteProbe`는 `getClient()`를 쓸 수 없으므로(비공개) `searchCache.ts`에서 가져오지
+말고, 스크립트 안에서 `createClient`로 직접 만들어 `.from('search_cache').delete()
+.eq('query_key', key)`를 호출하고 오류는 무시한다.
+
+- [ ] **Step 7: 전체 확인**
 
 Run: `npm test`
-Expected: PASS — 59 tests passed (기존 55 + 성공 경로 4개). 출력 깨끗.
+Expected: PASS — 60 tests passed (기존 55 + 성공 경로 4개 + 미스 침묵 1개). 출력 깨끗.
 **전체 소요 시간이 2초 미만인지 확인한다.**
+
+> Task 6이 먼저 끝났다면 기준선이 60이므로 총 65가 된다. 실행 순서에 따라 달라지니
+> 시작 전에 `npm test`로 현재 개수를 확인하고 그 값에 5를 더한 수를 기대하라.
 
 Run: `npx tsc --noEmit`
 Expected: 클린
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 8: 커밋**
 
 ```bash
-git add tests/unit/searchCache.test.ts
+git add tests/unit/searchCache.test.ts src/lib/searchCache.ts scripts/check-cache.ts
 git commit -m "test: 캐시 테스트를 MSW로 바꿔 14초 단축하고 Supabase 성공 경로 검증
 
 도달 불가 포트로 실제 연결을 시도하던 실패 테스트가 각각 7초씩 걸렸다.

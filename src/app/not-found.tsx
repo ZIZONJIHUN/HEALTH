@@ -1,4 +1,7 @@
 import Link from 'next/link'
+import MessageCard from '@/components/MessageCard'
+import { ICON_WEIGHT, SmileyMeh } from '@/components/icons'
+import { BUTTON_PRIMARY } from '@/components/styles'
 
 /**
  * getVideos 가 videos: [] 를 돌려주는 경로(예: /feed 에서 quotaExceeded && 캐시 없음)와
@@ -7,20 +10,18 @@ import Link from 'next/link'
  */
 export default function NotFound() {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
-      <div
-        data-testid="not-found-state"
-        className="rounded-xl border border-border bg-surface p-6"
-      >
-        <p className="text-sm text-text">페이지를 찾을 수 없어요.</p>
-        <p className="mt-1 text-xs text-muted">주소가 바뀌었거나 더 이상 존재하지 않아요.</p>
-        <Link
-          href="/"
-          className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-accent px-5 text-sm font-semibold text-bg"
-        >
-          홈으로
-        </Link>
-      </div>
-    </div>
+    <main id="main" className="flex min-h-dvh items-center justify-center bg-bg px-6">
+      <MessageCard
+        testId="not-found-state"
+        icon={<SmileyMeh size={22} weight={ICON_WEIGHT} aria-hidden />}
+        title="페이지를 찾을 수 없어요."
+        description="주소가 바뀌었거나 더 이상 존재하지 않아요."
+        actions={
+          <Link href="/" className={BUTTON_PRIMARY}>
+            홈으로
+          </Link>
+        }
+      />
+    </main>
   )
 }

@@ -1,8 +1,9 @@
-import CategoryChips from '@/components/CategoryChips'
+import { Suspense } from 'react'
 import EmptyState from '@/components/EmptyState'
 import QuotaBanner from '@/components/QuotaBanner'
-import SearchBar from '@/components/SearchBar'
-import VideoGrid from '@/components/VideoGrid'
+import SearchHeader from '@/components/SearchHeader'
+import SuggestPanel from '@/components/SuggestPanel'
+import VideoGrid, { VideoGridSkeleton } from '@/components/VideoGrid'
 import { firstParam } from '@/lib/searchParams'
 import { getVideos } from '@/lib/videoSearch'
 
@@ -12,21 +13,36 @@ export default async function ExercisePage({
   searchParams: Promise<{ q?: string | string[] }>
 }) {
   const q = firstParam((await searchParams).q) ?? ''
-  const result = q.trim() ? await getVideos(q) : null
+
+  return (
+    <div className="space-y-6">
+      <SearchHeader query={q} />
+
+      {/*
+        느린 건 getVideos 뿐이다. 검색창과 칩은 즉시 보내고 결과만 스트리밍해서,
+        검색을 기다리는 동안에도 다른 검색어를 칠 수 있게 한다.
+        (loading.tsx 를 쓰면 검색창까지 스켈레톤으로 사라진다.)
+        key 를 붙여야 검색어가 바뀔 때마다 폴백이 다시 뜬다.
+      */}
+      {q.trim() ? (
+        <Suspense key={q} fallback={<VideoGridSkeleton />}>
+          <SearchResults query={q} />
+        </Suspense>
+      ) : (
+        <SuggestPanel />
+      )}
+    </div>
+  )
+}
+
+async function SearchResults({ query }: { query: string }) {
+  const result = await getVideos(query)
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">어떤 운동을 볼까요</h1>
-      <SearchBar defaultValue={q} />
-      <CategoryChips />
+      {result.quotaExceeded ? <QuotaBanner /> : null}
 
-      {result?.quotaExceeded ? <QuotaBanner /> : null}
-
-      {result === null ? (
-        <p className="pt-6 text-center text-sm text-muted">
-          운동 이름을 검색하거나 위 부위를 선택하세요.
-        </p>
-      ) : result.videos.length === 0 ? (
+      {result.videos.length === 0 ? (
         <EmptyState query={result.query} />
       ) : (
         <VideoGrid query={result.query} videos={result.videos} />

@@ -1,6 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import MessageCard from '@/components/MessageCard'
+import { ArrowClockwise, ICON_WEIGHT, WarningCircle } from '@/components/icons'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/styles'
 
 /**
  * reset() 은 에러 상태만 지우고 서버 데이터를 재요청하지 않는다.
@@ -14,29 +17,25 @@ export default function FeedError({
   unstable_retry: () => void
 }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
-      <div
-        data-testid="error-state"
-        className="rounded-xl border border-danger/40 bg-danger/10 p-5"
-      >
-        <p className="text-sm text-text">영상을 불러오지 못했어요.</p>
-        <p className="mt-1 text-xs text-muted">네트워크를 확인한 뒤 다시 시도해 주세요.</p>
-        <div className="mt-4 flex justify-center gap-2">
-          <button
-            type="button"
-            onClick={() => unstable_retry()}
-            className="h-10 rounded-xl bg-accent px-5 text-sm font-semibold text-bg"
-          >
-            다시 시도
-          </button>
-          <Link
-            href="/"
-            className="flex h-10 items-center justify-center rounded-xl border border-border px-5 text-sm text-text"
-          >
-            홈으로
-          </Link>
-        </div>
-      </div>
+    <div className="flex min-h-dvh items-center justify-center bg-bg px-6">
+      <MessageCard
+        tone="danger"
+        testId="error-state"
+        icon={<WarningCircle size={22} weight={ICON_WEIGHT} aria-hidden />}
+        title="영상을 불러오지 못했어요."
+        description="네트워크를 확인한 뒤 다시 시도해 주세요."
+        actions={
+          <>
+            <button type="button" onClick={() => unstable_retry()} className={BUTTON_PRIMARY}>
+              <ArrowClockwise size={15} weight={ICON_WEIGHT} aria-hidden />
+              다시 시도
+            </button>
+            <Link href="/" className={BUTTON_SECONDARY}>
+              홈으로
+            </Link>
+          </>
+        }
+      />
     </div>
   )
 }

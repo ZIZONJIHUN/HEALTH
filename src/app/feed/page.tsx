@@ -23,9 +23,9 @@ export default async function FeedPage({
     : 0
 
   return (
-    <>
+    <main id="main">
       <BackButton />
       <ShortsFeed videos={result.videos} initialIndex={initialIndex} />
-    </>
+    </main>
   )
 }

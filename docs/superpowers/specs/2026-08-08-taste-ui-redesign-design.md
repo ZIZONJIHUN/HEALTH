@@ -44,10 +44,18 @@ GSAP 스크롤 하이재킹)은 적용 대상이 아니다. 적용하는 것은 
 자가호스팅한다.
 
 - `public/fonts/pretendard/` 에 dynamic subset woff2 92개 + `@font-face` CSS를 커밋한다.
-- 전체 2.82MB지만 `unicode-range` 로 쪼개져 있어 실제 페이지당 필요한 조각(~150KB)만 내려받는다.
-  - 대안 비교: full variable 단일 파일 2.06MB(전량 다운로드), static subset 3 weight 806KB.
-    dynamic subset이 실사용 바이트에서 유리하고 가변 폰트라 weight 5종을 무료로 쓴다.
-- `font-display: swap`, 라틴 조각(subset.0)만 `<link rel="preload">`.
+  받아오는 스크립트는 `scripts/fetch-pretendard.mjs`.
+- 전체 2.82MB지만 `unicode-range` 로 쪼개져 있어 화면에 실제로 쓰인 글자 범위만 내려받는다.
+  실측(프로덕션 빌드, 콜드 캐시):
+  - 첫 화면(`/`): 2조각 **57KB**
+  - 검색 결과(`/?q=스쿼트`): 11조각 **277KB** — 영상 제목이 임의의 한국어라 범위가 넓어진다
+  - 대안 비교: full variable 단일 파일은 **2,009KB 를 항상 전량** 받고,
+    static subset 3 weight 는 **806KB** 다. 어느 화면에서든 dynamic subset 이 유리하고,
+    가변 폰트라 weight 5종(400~800)을 추가 비용 없이 쓴다.
+- `font-display: swap`. 어떤 화면에서든 반드시 쓰이는 91번(기본 라틴 + 최빈 한글)과
+  90번(차빈 한글)만 `<link rel="preload">` 한다.
+- Geist Mono 는 **69KB** 이고 `.tabular` 가 렌더되는 화면(검색 결과·피드)에서만 내려간다.
+  첫 화면에서는 preload 되지 않는다.
 
 **숫자/메타: Geist Mono** — `next/font/google` (빌드 타임 자가호스팅, 런타임 외부 요청 0).
 재생시간 배지, 진행 인디케이터(`3 / 9`) 등 숫자에 `font-variant-numeric: tabular-nums` 와 함께 쓴다.
@@ -113,7 +121,8 @@ CSS 변수 `--font-sans`, `--font-mono` 로 노출하고 Tailwind `@theme` 에 �
 
 | 컴포넌트 | 변경 |
 |---|---|
-| `loading.tsx` (신규) | `(tabs)` 라우트 스켈레톤 그리드. 검색 대기 중 레이아웃 그대로 보여준다 |
+| `page.tsx` | 결과만 `<Suspense>` 로 감싸고 스켈레톤을 폴백으로 준다 (아래 참고) |
+| `SearchHeader` (신규) | page 와 error 화면이 같은 머리말(제목·검색창·칩)을 공유한다 |
 | `SearchBar` | 검색 아이콘, 값이 있을 때 지우기(×) 버튼, `enterKeyHint="search"`, 포커스 링, PC 폭 확장 |
 | `CategoryChips` | 현재 `q` 와 일치하는 칩 활성 표시(`aria-current`), 좌우 페이드 마스크, 스크롤바 숨김 |
 | `VideoGrid` | 반응형 열, hover 시 썸네일 `scale(1.04)` + 재생 오버레이, 포커스 링, 배지 mono+tabular |
@@ -126,7 +135,16 @@ CSS 변수 `--font-sans`, `--font-mono` 로 노출하고 Tailwind `@theme` 에 �
 | `error.tsx` × 2, `not-found.tsx` | 새 토큰으로 재작성 |
 
 아이콘은 `@phosphor-icons/react` 를 쓴다. Taste Skill이 `lucide-react` 를 비권장하고 직접 SVG를
-그리는 것을 금지한다. stroke weight 는 `regular` 하나로 통일한다.
+그리는 것을 금지한다. 굵기는 `src/components/icons.ts` 의 `ICON_WEIGHT` 하나로 통일하고,
+최상위 배럴(`'use client'`) 대신 `dist/ssr/<이름>` 을 거쳐 가져와 서버 컴포넌트에 클라이언트
+경계가 생기지 않게 한다.
+
+### 로딩 상태는 `loading.tsx` 가 아니라 `<Suspense>` 로 한다
+
+`loading.tsx` 를 두면 Next 가 라우트 전체를 감싸므로 `q` 가 바뀔 때마다 **검색창과 칩까지**
+스켈레톤으로 사라진다. 느린 것은 `getVideos` 뿐이므로 결과 영역만 `<Suspense key={q}>` 로
+감싼다. 검색창은 즉시 스트리밍되고, 기다리는 동안 다른 검색어를 칠 수 있다.
+`key={q}` 가 없으면 검색어가 바뀌어도 폴백이 다시 뜨지 않는다.
 
 ## 6. 보존 계약 (깨뜨리면 안 되는 것)
 
@@ -139,6 +157,9 @@ E2E가 의존하므로 아래는 그대로 유지한다.
   그리드를 `overflow-y-auto` 내부 컨테이너에 넣으면 안 된다.
 - `MOUNT_WINDOW = 1` (iframe 3개 검증)
 - `EmptyState` 의 추천 링크 접근성 이름(`스쿼트` 등)
+- **새 버튼의 접근성 이름에 기존 버튼 이름을 부분 문자열로 넣지 않는다.**
+  `getByRole('button', { name: '검색' })` 은 부분 일치라, 지우기 버튼을 "검색어 지우기" 로
+  두면 제출 버튼과 함께 잡혀 strict mode 위반이 난다. "입력 지우기" 로 둔다.
 
 ## 7. 검증
 

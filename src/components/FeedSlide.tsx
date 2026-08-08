@@ -1,4 +1,5 @@
 import Image from 'next/image'
+import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
 import { buildEmbedUrl } from '@/lib/embed'
 import type { ShortVideo } from '@/lib/types'
 
@@ -20,22 +21,46 @@ export default function FeedSlide({
   autoplay: boolean
 }) {
   return (
-    <div className="relative h-full w-full bg-black">
-      {active ? (
-        <iframe
-          src={buildEmbedUrl(video.id, { autoplay })}
-          title={video.title}
-          allow="autoplay; encrypted-media; picture-in-picture"
-          allowFullScreen
-          className="absolute inset-0 h-full w-full border-0"
-        />
-      ) : (
-        <Image src={video.thumbnailUrl} alt="" fill sizes="100vw" className="object-cover opacity-50" />
-      )}
+    <div className="relative flex h-full w-full items-center justify-center bg-black">
+      {/* 데스크톱에서는 9:16 플레이어 양옆이 비는데, 검은 여백만 두면 화면이 죽는다.
+          같은 썸네일을 크게 흐려 깔아 영상 색이 화면 전체로 번지게 한다. */}
+      <Image
+        src={video.thumbnailUrl}
+        alt=""
+        aria-hidden
+        fill
+        sizes="100vw"
+        className="hidden scale-110 object-cover opacity-20 blur-3xl md:block"
+      />
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 pb-8">
-        <p className="line-clamp-2 text-sm font-medium text-text">{video.title}</p>
-        <p className="mt-0.5 text-xs text-muted">{video.channelTitle}</p>
+      <div
+        className={`relative h-full w-full overflow-hidden md:rounded-2xl md:shadow-pop md:ring-1 md:ring-white/10 ${FEED_PLAYER_BOX}`}
+      >
+        {active ? (
+          <iframe
+            src={buildEmbedUrl(video.id, { autoplay })}
+            title={video.title}
+            allow="autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            className="absolute inset-0 h-full w-full border-0"
+          />
+        ) : (
+          <Image
+            src={video.thumbnailUrl}
+            alt=""
+            fill
+            sizes="(min-width: 768px) 500px, 100vw"
+            className="object-cover opacity-50"
+          />
+        )}
+
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-4 pt-12 pb-6"
+          style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+        >
+          <p className="line-clamp-2 text-sm leading-snug font-semibold text-text">{video.title}</p>
+          <p className="mt-1 text-xs text-muted">{video.channelTitle}</p>
+        </div>
       </div>
     </div>
   )

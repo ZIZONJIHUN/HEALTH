@@ -7,6 +7,17 @@ import { getVideos } from '../src/lib/videoSearch'
  * 쿼터가 소진되면 즉시 멈춘다. 남은 항목은 다음 날 다시 실행한다.
  */
 async function main() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없습니다.')
+    console.error(
+      'Supabase 없이 시드를 돌리면 getVideos()가 이 스크립트 프로세스의 메모리 캐시에만 쓰고,' +
+        ' 그 캐시는 프로세스가 끝나는 순간 사라집니다. 검색 20건(약 2,020 units, 일일 쿼터의' +
+        ' 5분의 1)을 쓰고도 아무것도 저장되지 않습니다.',
+    )
+    process.exitCode = 1
+    return
+  }
+
   for (const exercise of POPULAR_EXERCISES) {
     try {
       const result = await getVideos(exercise)

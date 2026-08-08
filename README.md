@@ -36,7 +36,7 @@ Supabase를 붙이면 캐시가 인스턴스 간, 재시작 간에도 유지된�
 npm run dev         # 개발 서버
 npm test            # 단위 테스트
 npm run test:e2e    # E2E (모의 YouTube 서버를 자동으로 띄운다)
-npm run seed        # 인기 운동 20개 캐시 시드
+npm run seed        # 인기 운동 20개 캐시 시드 (Supabase 필수 — 없으면 즉시 종료한다)
 npm run cache:check # Supabase 캐시 왕복 확인
 ```
 

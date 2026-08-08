@@ -12,6 +12,11 @@
 
 - 다크 전용. 라이트모드 토글을 만들지 않는다.
 - 팔레트 (Tailwind 테마 토큰으로 등록): 배경 `#0B0D10`, 카드 `#14171C`, 카드2 `#1C2027`, 경계 `#262B33`, 본문 `#E8EBF0`, 보조 `#8A929E`, 강조 `#C8FF3D`, 경고 `#FF5A5F`
+- **예외: 영상 위 스크림은 `black`을 쓴다.** 재생시간 배지 배경(`bg-black/70`), 피드 하단
+  그라데이션(`from-black/85`), 뒤로가기 버튼 배경(`bg-black/60`)이 해당한다. 팔레트 토큰은
+  앱 UI의 색을 통일하기 위한 것이고, 임의의 영상 프레임 위에 깔리는 반투명 층은 성격이
+  다르다. `surface`(#14171C)를 70%로 깔면 푸른 기가 묻어나 영상 색이 왜곡된다. 스크림은
+  중립 검정이어야 한다. 토큰 8개 제약은 **불투명한 UI 표면**에만 적용된다.
 - `YOUTUBE_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`는 서버 모듈에서만 읽는다. `'use client'` 파일이나 `NEXT_PUBLIC_` 접두사에 절대 넣지 않는다.
 - 쇼츠 판정: 실제 길이 **180초 이하**, 그리고 0초 초과 (0초는 라이브 스트림)
 - `search.list` 파라미터: `type=video`, `videoDuration=short`, `videoEmbeddable=true`, `regionCode=KR`, `relevanceLanguage=ko`, `maxResults=25`
@@ -23,6 +28,12 @@
 - 부위별 카테고리는 가슴, 등, 어깨, 하체, 팔, 코어, 전신 7개.
 - 캐시 장애는 검색을 실패시키지 않는다. Supabase 환경변수가 없거나 호출이 실패하면 캐시를 조용히 건너뛴다.
 - 모든 테스트는 실제 YouTube 쿼터를 소모하지 않는다.
+- 설치된 버전은 **Next.js 16.2.11 / React 19.2.4 / Tailwind v4**다. 번들 문서(`node_modules/next/dist/docs/`)로 확인한 사항:
+  - `searchParams`는 Promise이므로 `await`한다. Next 16은 동기 접근을 완전히 제거했다.
+  - `next.config.ts`에 **`cacheComponents`를 켜지 않는다.** 켜면 동적 API가 `<Suspense>` 밖에서 빌드 오류를 낸다. 이 앱은 Next 캐시가 아닌 자체 Supabase 캐시에 의존한다.
+  - `fetch`는 기본적으로 캐시되지 않고 한 렌더 안에서만 중복 제거된다. YouTube 응답에 `cache` 옵션을 붙이지 않는다.
+  - `next lint`는 제거됐다. `npm run lint`를 쓴다.
+  - `next.config.ts`에 커스텀 `webpack()` 설정을 넣지 않는다. Turbopack이 기본이라 빌드가 실패한다.
 
 ---
 
@@ -1110,6 +1121,766 @@ git commit -m "feat: Supabase 검색 캐시 추가 (7일 TTL, 장애 시 무해�
 
 ---
 
+### Task 5b: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백
+
+**Files:**
+- Modify: `src/lib/searchCache.ts`
+- Modify: `tests/unit/searchCache.test.ts`
+
+**Interfaces:**
+- Consumes: Task 5의 `CACHE_TTL_MS`, `isCacheFresh`, `readCache`, `writeCache`, `normalizeQuery`
+- Produces: `clearMemoryCache(): void` — 테스트 전용. 프로세스 내 캐시를 비운다.
+- 변경 없음: `readCache`·`writeCache`의 시그니처와 외부 동작 계약은 그대로다
+
+**왜 필요한가**
+
+Supabase 환경변수가 없으면 Task 5의 캐시는 완전한 no-op이다. 앱은 정상 동작하지만
+같은 검색어를 반복해도 매번 쿼터 101 units를 쓴다. 일일 무료 한도 10,000이면
+하루 약 99회가 전부여서 개발 중 반나절에 소진된다.
+
+프로세스 내 `Map`을 폴백으로 두면 Supabase를 설정하지 않은 상태에서도 같은 세션의
+반복 검색이 무료가 된다. 프로세스가 죽으면 사라지고 Vercel 인스턴스 간에 공유되지도
+않지만, 그건 Supabase를 설정하면 해결되는 문제다. 이 폴백의 목적은 **Supabase 없이
+개발을 시작할 수 있게 하는 것**뿐이다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/searchCache.test.ts`의 기존 `describe('Supabase 환경변수가 없을 때', ...)`
+블록을 아래로 교체한다. `clearMemoryCache`를 import에 추가한다.
+
+```ts
+describe('Supabase 환경변수가 없을 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+  })
+
+  it('쓰지 않은 검색어는 null을 반환한다', async () => {
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  })
+
+  it('쓰기는 조용히 성공한다', async () => {
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+  })
+
+  it('쓴 결과를 메모리에서 다시 읽는다', async () => {
+    const videos = [
+      {
+        id: 'a',
+        title: '스쿼트 기본',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/a/hqdefault.jpg',
+        durationSeconds: 45,
+      },
+    ]
+
+    await writeCache('스쿼트', videos)
+
+    await expect(readCache('스쿼트')).resolves.toEqual(videos)
+  })
+
+  it('정규화된 검색어를 키로 쓴다', async () => {
+    await writeCache('  스쿼트  ', [])
+
+    await expect(readCache('스쿼트')).resolves.toEqual([])
+  })
+
+  it('TTL이 지난 메모리 항목은 null을 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { now: later })).resolves.toBeNull()
+  })
+
+  it('allowStale이면 TTL이 지난 메모리 항목도 반환한다', async () => {
+    await writeCache('스쿼트', [])
+    const later = Date.now() + CACHE_TTL_MS + 1
+
+    await expect(readCache('스쿼트', { allowStale: true, now: later })).resolves.toEqual([])
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts`
+Expected: FAIL — `clearMemoryCache` is not exported, 그리고 "쓴 결과를 메모리에서 다시 읽는다"가
+`null`을 받아 실패한다
+
+- [ ] **Step 3: 메모리 폴백 구현**
+
+`src/lib/searchCache.ts`에 추가하고 `readCache`·`writeCache`를 수정한다.
+`getClient()`, `isCacheFresh`, `CACHE_TTL_MS`는 건드리지 않는다.
+
+```ts
+type MemoryEntry = { payload: ShortVideo[]; createdAt: number }
+
+/**
+ * Supabase 환경변수가 없을 때만 쓰는 프로세스 내 폴백.
+ * 프로세스가 죽으면 사라지고 인스턴스 간에 공유되지 않는다.
+ * 목적은 Supabase 설정 없이 개발할 때 같은 검색어 반복이 쿼터를 태우지 않게 하는 것뿐이다.
+ */
+const memoryCache = new Map<string, MemoryEntry>()
+
+/** 테스트 전용. 프로세스 내 폴백 캐시를 비운다. */
+export function clearMemoryCache(): void {
+  memoryCache.clear()
+}
+
+function readMemory(
+  key: string,
+  allowStale: boolean,
+  now: number,
+): ShortVideo[] | null {
+  const entry = memoryCache.get(key)
+  if (!entry) return null
+  if (!allowStale && now - entry.createdAt > CACHE_TTL_MS) return null
+  return entry.payload
+}
+```
+
+`readCache`의 `if (!client) return null` 을 아래로 바꾼다.
+
+```ts
+  const { allowStale = false, now = Date.now() } = options
+  const key = normalizeQuery(query)
+
+  if (!client) return readMemory(key, allowStale, now)
+```
+
+이후 본문에서 `normalizeQuery(query)` 대신 `key`를 쓴다.
+
+`writeCache`의 `if (!client) return` 을 아래로 바꾼다.
+
+```ts
+  const key = normalizeQuery(query)
+
+  if (!client) {
+    memoryCache.set(key, { payload: videos, createdAt: Date.now() })
+    return
+  }
+```
+
+이후 본문에서 `normalizeQuery(query)` 대신 `key`를 쓴다.
+
+`ShortVideo` import가 이미 있는지 확인한다.
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 52 tests passed (Task 4b 완료 후 48에서, 환경변수 없을 때 블록이 2개 → 6개로 늘어 +4)
+
+> 실행 순서는 **Task 4b → 5b → 5c**다. 누적 테스트 개수는 48 → 52 → 55.
+> 순서를 바꾸면 각 태스크의 기대 개수도 달라진다.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/searchCache.ts tests/unit/searchCache.test.ts
+git commit -m "feat: Supabase 없이도 쿼터를 아끼는 메모리 캐시 폴백 추가"
+```
+
+---
+
+### Task 5c: 캐시 장애를 보이게 만들기
+
+**Files:**
+- Modify: `src/lib/searchCache.ts`
+- Modify: `tests/unit/searchCache.test.ts`
+- Create: `tests/setup.ts`
+- Modify: `vitest.config.ts` (`setupFiles` 추가)
+- Create: `scripts/check-cache.ts`
+- Modify: `package.json` (`cache:check` 스크립트 추가)
+
+**Interfaces:**
+- 변경 없음: `readCache`·`writeCache`의 시그니처와 반환값 계약. 사용자에게 보이는 동작은 그대로다
+- Produces: `npm run cache:check` — 실제 Supabase에 왕복 검증
+
+**왜 필요한가**
+
+Task 5 리뷰가 지적한 것: `readCache`·`writeCache`의 성공 경로에 테스트가 없다.
+Supabase의 HTTP 와이어 포맷을 목으로 흉내내는 테스트는 "우리가 목을 올바르게 호출했다"만
+증명하고 "PostgREST가 이 요청을 받아들인다"는 증명하지 못한다. 그래서 목 테스트 대신
+두 가지로 막는다.
+
+진짜 위험은 **침묵**이다. 이 모듈은 모든 오류를 삼킨다. 컬럼명 오타나 마이그레이션 미실행으로
+캐시가 완전히 죽어도 앱은 정상 동작하고 쿼터만 태운다. 하루 약 99회면 소진되는데 원인을
+알 방법이 없다.
+
+1. **오류를 서버 로그로 남긴다.** 사용자에게 보이는 동작은 그대로 유지한다 — 여전히
+   `null`을 반환하고 예외를 던지지 않는다. 로그만 추가된다. 우아한 degrade는 유지하면서
+   장애가 발견 가능해진다.
+2. **`npm run cache:check`로 실제 왕복을 검증한다.** 목이 아니라 진짜 Supabase에 쓰고
+   읽어서 마이그레이션 실행 여부와 키 권한을 한 번에 확인한다. 셋업 직후 한 번 돌리면
+   된다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/searchCache.test.ts` 맨 아래에 추가한다. import에 `vi`를 포함한다.
+
+```ts
+describe('Supabase 호출이 실패할 때', () => {
+  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+
+  beforeEach(() => {
+    // 도달할 수 없는 호스트를 가리켜 호출을 실패시킨다.
+    process.env.SUPABASE_URL = 'http://127.0.0.1:1'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    clearMemoryCache()
+  })
+
+  afterEach(() => {
+    if (saved.url) process.env.SUPABASE_URL = saved.url
+    else delete process.env.SUPABASE_URL
+    if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
+    else delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    vi.restoreAllMocks()
+  })
+
+  it('읽기 실패는 null을 반환하고 예외를 던지지 않는다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(readCache('스쿼트')).resolves.toBeNull()
+  })
+
+  it('읽기 실패를 경고로 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await readCache('스쿼트')
+
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]?.[0])).toContain('search_cache')
+  })
+
+  it('쓰기 실패는 조용히 성공하고 경고를 남긴다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(writeCache('스쿼트', [])).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts`
+Expected: FAIL — "읽기 실패를 경고로 남긴다"가 `console.warn` 호출 0회로 실패한다
+
+- [ ] **Step 3: 경고 로그 추가**
+
+`src/lib/searchCache.ts`에 헬퍼를 추가한다.
+
+```ts
+/**
+ * 캐시 장애를 서버 로그로만 남긴다.
+ * 사용자에게 보이는 동작은 바꾸지 않는다 — 캐시는 성능 최적화이지 정확성 의존성이 아니다.
+ * 로그가 없으면 컬럼명 오타나 마이그레이션 미실행으로 캐시가 완전히 죽어도
+ * 앱은 정상 동작하는 것처럼 보이고 쿼터만 태운다.
+ */
+function warnCacheFailure(operation: string, cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause)
+  console.warn(`[search_cache] ${operation} 실패 — 캐시를 건너뜁니다: ${reason}`)
+}
+```
+
+`readCache`의 Supabase 경로를 수정한다. `error`가 있을 때와 예외가 났을 때 모두 로그를
+남긴다. **행이 없는 정상적인 캐시 미스(`!data`)는 로그를 남기지 않는다** — 그건 장애가
+아니라 흔한 일이다.
+
+```ts
+    const { data, error } = await client
+      .from(TABLE)
+      .select('payload, created_at')
+      .eq('query_key', key)
+      .maybeSingle()
+
+    if (error) {
+      warnCacheFailure('읽기', error.message)
+      return null
+    }
+    if (!data) return null
+    if (!allowStale && !isCacheFresh(data.created_at as string, now)) return null
+    return data.payload as ShortVideo[]
+  } catch (cause) {
+    warnCacheFailure('읽기', cause)
+    return null
+  }
+```
+
+`writeCache`도 같은 방식으로 수정한다. `upsert`의 반환값에서 `error`를 확인한다.
+
+```ts
+  try {
+    const { error } = await client.from(TABLE).upsert({
+      query_key: key,
+      payload: videos,
+      created_at: new Date().toISOString(),
+    })
+
+    if (error) warnCacheFailure('쓰기', error.message)
+  } catch (cause) {
+    warnCacheFailure('쓰기', cause)
+  }
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 55 tests passed (기존 52 + 3)
+
+출력에 `[search_cache]` 경고가 새는지 확인한다. 테스트가 `console.warn`을 목으로 막으므로
+출력은 깨끗해야 한다.
+
+- [ ] **Step 5: 메모리 캐시 전역 정리 훅 추가**
+
+Task 5b가 `searchCache`를 모듈 수준 `Map`을 든 상태 있는 모듈로 만들었다. 지금은
+파일마다 `clearMemoryCache()`를 잊지 않고 부르는 규율에 의존한다. Vitest의 파일 격리
+기본값 덕에 현재는 새지 않지만, 그건 우연한 완화이지 이 코드가 만든 보장이 아니다.
+훅을 빠뜨리면 테스트가 **실패하지 않고 조용히 무의미해진다** — 캐시 히트를 받아
+검증하려던 경로를 아예 타지 않는다.
+
+`tests/setup.ts`:
+
+```ts
+import { afterEach } from 'vitest'
+import { clearMemoryCache } from '@/lib/searchCache'
+
+/**
+ * searchCache 는 모듈 수준 Map 을 들고 있다.
+ * 파일마다 비우는 것을 기억하는 대신 전역으로 비운다.
+ * 빠뜨리면 테스트가 실패하지 않고 조용히 캐시 히트를 받아 무의미해진다.
+ */
+afterEach(() => {
+  clearMemoryCache()
+})
+```
+
+`vitest.config.ts`의 `test` 블록에 한 줄 추가한다. 나머지는 건드리지 않는다.
+
+```ts
+    setupFiles: ['./tests/setup.ts'],
+```
+
+기존 테스트 파일의 `clearMemoryCache()` 호출은 그대로 둔다. 중복이지만 그 파일만 읽는
+사람에게 의도를 보여준다.
+
+- [ ] **Step 6: 전역 훅이 동작하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 55 tests passed. 개수는 Step 4와 같다. 이 단계는 새 테스트를 더하지
+않고 기존 테스트가 서로를 오염시키지 않게 보장한다.
+
+- [ ] **Step 7: 왕복 검증 스크립트 작성**
+
+`scripts/check-cache.ts`:
+
+```ts
+import { readCache, writeCache } from '../src/lib/searchCache'
+
+/**
+ * 실제 Supabase에 쓰고 읽어서 캐시가 정말 동작하는지 확인한다.
+ * 마이그레이션 실행 여부, service_role 키 권한, 테이블·컬럼명을 한 번에 검증한다.
+ * 목 테스트로는 PostgREST가 요청을 받아들이는지 알 수 없어서 이 스크립트가 필요하다.
+ */
+async function main() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없습니다.')
+    console.log('캐시 없이도 앱은 동작합니다. 다만 같은 검색어도 매번 쿼터를 씁니다.')
+    return
+  }
+
+  const probeQuery = '__cache_check__'
+  const probe = [
+    {
+      id: 'probe',
+      title: '왕복 검증',
+      channelTitle: 'check',
+      thumbnailUrl: 'https://i.ytimg.com/vi/probe/hqdefault.jpg',
+      durationSeconds: 42,
+    },
+  ]
+
+  await writeCache(probeQuery, probe)
+  const readBack = await readCache(probeQuery)
+
+  if (!readBack) {
+    console.error('실패: 쓴 값을 다시 읽지 못했습니다.')
+    console.error('supabase/migrations/0001_search_cache.sql 을 실행했는지,')
+    console.error('SUPABASE_SERVICE_ROLE_KEY 가 anon 키가 아닌 service_role 키인지 확인하세요.')
+    console.error('위에 [search_cache] 경고가 있으면 그게 원인입니다.')
+    process.exitCode = 1
+    return
+  }
+
+  if (readBack[0]?.durationSeconds !== 42) {
+    console.error('실패: 읽은 값이 쓴 값과 다릅니다.', readBack)
+    process.exitCode = 1
+    return
+  }
+
+  console.log('성공: 캐시 쓰기와 읽기가 정상입니다.')
+}
+
+void main()
+```
+
+`package.json`의 `scripts`에 추가한다.
+
+```json
+"cache:check": "tsx --env-file=.env.local scripts/check-cache.ts"
+```
+
+`tsx`는 Task 1에서 이미 설치했다.
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add src/lib/searchCache.ts tests/unit/searchCache.test.ts tests/setup.ts vitest.config.ts scripts/check-cache.ts package.json
+git commit -m "feat: 캐시 장애를 서버 로그와 왕복 검증 스크립트로 드러냄
+
+모든 오류를 삼키는 설계라 컬럼명 오타나 마이그레이션 미실행으로 캐시가
+완전히 죽어도 앱은 정상 동작하는 것처럼 보이고 쿼터만 태운다.
+사용자에게 보이는 동작은 그대로 두고 서버 로그만 추가했다."
+```
+
+---
+
+### Task 5d: 캐시 테스트를 MSW로 바꿔 14초를 되찾고 성공 경로를 검증
+
+**Files:**
+- Modify: `tests/unit/searchCache.test.ts`
+- Modify: `src/lib/searchCache.ts` (주석 한 줄만)
+- Modify: `scripts/check-cache.ts` (탐침 행 정리)
+
+**Interfaces:**
+- `searchCache.ts`의 동작은 바꾸지 않는다. 낡은 주석 한 줄만 고친다
+- 이 태스크는 **조사가 필요하다.** 아래 코드는 출발점이지 받아쓸 정답이 아니다
+
+**왜 필요한가**
+
+두 가지를 한 번에 해결한다.
+
+**1. 테스트가 14초 느리다.** Task 5c의 실패 테스트는 `SUPABASE_URL`을
+`http://127.0.0.1:1`로 두어 실제 연결을 시도한다. 측정 결과:
+
+```
+읽기 실패는 null을 반환하고 예외를 던지지 않는다   7072ms
+읽기 실패를 경고로 남긴다                        7040ms
+쓰기 실패는 조용히 성공하고 경고를 남긴다             8ms
+```
+
+전체 스위트가 891ms에서 15.8초가 됐다. 남은 태스크마다 이 비용을 낸다.
+
+**2. Supabase 성공 경로에 테스트가 없다.** Task 5 리뷰의 Important 지적이다.
+`.from(TABLE).select('payload, created_at').eq('query_key', key).maybeSingle()`이
+정말 올바른 요청을 만드는지, `upsert` 본문이 맞는지 아무것도 검증하지 않는다.
+모든 오류를 삼키는 설계라 테이블명이나 컬럼명이 틀려도 조용히 죽는다.
+
+MSW로 Supabase REST 엔드포인트를 가로채면 둘 다 해결된다. 즉시 응답하므로 빠르고,
+**우리가 실제로 보내는 URL·쿼리·본문을 검증**하므로 성공 경로가 덮인다.
+
+- [ ] **Step 1: 실제 요청 모양을 확인한다**
+
+`@supabase/supabase-js`가 어떤 HTTP 요청을 만드는지 먼저 관찰한다. 추측하지 말고 찍어본다.
+임시 테스트를 하나 만들어 MSW로 모든 요청을 가로채고 URL·메서드·헤더·본문을 출력한다.
+
+```ts
+server.use(
+  http.all('http://supabase.test/*', async ({ request }) => {
+    console.log(request.method, request.url)
+    console.log('accept:', request.headers.get('accept'))
+    if (request.method !== 'GET') console.log('body:', await request.clone().text())
+    return HttpResponse.json([])
+  }),
+)
+```
+
+`readCache`와 `writeCache`를 한 번씩 호출해 출력을 확인하고, **관찰한 내용을 보고서에
+그대로 기록한다.** 특히 `maybeSingle()`이 보내는 `Accept` 헤더와, 그것이 응답을 배열로
+기대하는지 단일 객체로 기대하는지 확인한다. 이 관찰 결과가 Step 2의 응답 모양을 결정한다.
+확인 후 임시 테스트는 지운다.
+
+- [ ] **Step 2: 실패 테스트를 MSW로 교체**
+
+`tests/unit/searchCache.test.ts`의 `describe('Supabase 호출이 실패할 때', ...)` 블록을
+MSW 기반으로 바꾼다. 파일 상단에 MSW 서버를 세운다.
+
+```ts
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+
+const SUPABASE_URL = 'http://supabase.test'
+const CACHE_ENDPOINT = `${SUPABASE_URL}/rest/v1/search_cache`
+
+const server = setupServer()
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+```
+
+실패 블록의 `beforeEach`에서 환경변수를 `SUPABASE_URL`로 설정하고 핸들러가
+`HttpResponse.error()`(네트워크 오류 시뮬레이션)를 반환하게 한다. 기존 3개 테스트의
+단정(`null` 반환, `console.warn` 호출, `undefined` 반환)은 그대로 유지한다.
+
+- [ ] **Step 3: 실패 테스트가 빨라졌는지 확인**
+
+Run: `npx vitest run tests/unit/searchCache.test.ts --reporter=verbose`
+Expected: 세 개의 실패 테스트가 각각 **100ms 미만**. 파일 전체가 1초 미만.
+
+7초짜리가 남아 있으면 MSW가 요청을 가로채지 못하고 실제 네트워크로 나간 것이다.
+`onUnhandledRequest: 'error'`가 켜져 있으면 그 경우 테스트가 실패하므로 바로 드러난다.
+
+- [ ] **Step 4: 성공 경로 테스트 추가**
+
+새 `describe('Supabase가 정상일 때', ...)` 블록을 추가한다. Step 1에서 관찰한 실제 요청
+모양에 맞춰 작성한다. 다음 네 가지를 덮는다.
+
+1. **읽기가 저장된 결과를 반환한다** — 핸들러가 신선한 `created_at`과 `ShortVideo` 배열
+   payload를 담은 행을 반환하면 `readCache`가 그 배열을 그대로 돌려준다
+2. **올바른 테이블과 쿼리로 요청한다** — 핸들러에서 요청 URL을 붙잡아 경로가
+   `/rest/v1/search_cache`이고, `select`에 `payload`와 `created_at`이 들어 있고,
+   `query_key` 필터가 **정규화된** 검색어(`'  스쿼트  '` → `'스쿼트'`)인지 단정한다
+3. **TTL이 지난 행은 null을 반환한다** — 8일 전 `created_at`을 반환하는 핸들러.
+   `allowStale: true`면 같은 행을 돌려준다
+4. **쓰기가 올바른 본문을 보낸다** — 핸들러에서 POST 본문을 파싱해 `query_key`가
+   정규화돼 있고 `payload`가 넘긴 배열과 같은지 단정한다
+
+2번과 4번이 이 태스크의 핵심이다. 테이블명·컬럼명 오타를 잡는 유일한 자동 검증이다.
+
+- [ ] **Step 5: 캐시 미스가 조용한지 검증하는 테스트 추가**
+
+Task 5c 리뷰의 지적이다. `readCache`는 `error`가 있을 때만 경고하고 행이 없을 때
+(`!data`)는 조용해야 한다. 캐시 미스는 장애가 아니라 첫 검색마다 일어나는 일이라,
+여기서 로그를 남기면 콘솔이 범람한다. 코드는 맞지만 이를 지키는 테스트가 없어
+나중에 리팩터링하면서 되살아나도 아무도 모른다.
+
+`describe('Supabase가 정상일 때', ...)`에 추가한다.
+
+```ts
+  it('행이 없으면 null을 반환하고 경고하지 않는다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 핸들러가 "행 없음"을 반환하도록 설정한다 (Step 1에서 관찰한 형태로).
+
+    await expect(readCache('없는운동')).resolves.toBeNull()
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+```
+
+- [ ] **Step 6: 낡은 주석과 탐침 행 정리**
+
+`src/lib/searchCache.ts`의 `writeCache` 위 주석이 실제 동작과 어긋난다.
+Task 5c에서 실패를 로그로 남기게 됐으므로 "실패는 무시한다"는 더 이상 정확하지 않다.
+
+```ts
+/** 검색 결과를 캐시에 저장한다. 실패는 로그만 남기고 삼킨다. */
+```
+
+`scripts/check-cache.ts`가 `__cache_check__` 행을 프로덕션 테이블에 남긴다.
+고정 키라 무한히 쌓이지는 않지만, 성공 후 지우는 편이 깔끔하다. 성공 경로 마지막,
+"성공" 출력 직전에 정리를 넣는다. 정리 실패는 검증 결과를 뒤집지 않는다.
+
+```ts
+  await deleteProbe(probeQuery)
+  console.log('성공: 캐시 쓰기와 읽기가 정상입니다.')
+```
+
+`deleteProbe`는 `getClient()`를 쓸 수 없으므로(비공개) `searchCache.ts`에서 가져오지
+말고, 스크립트 안에서 `createClient`로 직접 만들어 `.from('search_cache').delete()
+.eq('query_key', key)`를 호출하고 오류는 무시한다.
+
+- [ ] **Step 7: 전체 확인**
+
+Run: `npm test`
+Expected: PASS — 60 tests passed (기존 55 + 성공 경로 4개 + 미스 침묵 1개). 출력 깨끗.
+**전체 소요 시간이 2초 미만인지 확인한다.**
+
+> Task 6이 먼저 끝났다면 기준선이 60이므로 총 65가 된다. 실행 순서에 따라 달라지니
+> 시작 전에 `npm test`로 현재 개수를 확인하고 그 값에 5를 더한 수를 기대하라.
+
+Run: `npx tsc --noEmit`
+Expected: 클린
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add tests/unit/searchCache.test.ts src/lib/searchCache.ts scripts/check-cache.ts
+git commit -m "test: 캐시 테스트를 MSW로 바꿔 14초 단축하고 Supabase 성공 경로 검증
+
+도달 불가 포트로 실제 연결을 시도하던 실패 테스트가 각각 7초씩 걸렸다.
+MSW로 가로채면 즉시 응답하고, 동시에 우리가 보내는 URL·쿼리·본문을 검증하므로
+테이블명·컬럼명 오타를 잡는 자동 검증이 생긴다. 모든 오류를 삼키는 설계라
+그 오타는 지금까지 조용히 캐시를 죽이기만 했다."
+```
+
+---
+
+### Task 4b: 레이트리밋도 쿼터 소진으로 판별
+
+**Files:**
+- Modify: `src/lib/youtube.ts`
+- Modify: `tests/unit/youtube.test.ts`
+
+**Interfaces:**
+- Produces: `isQuotaFailure(status: number, body: string): boolean` — 순수 함수, 직접 테스트 가능
+- 변경 없음: `searchShorts`와 `QuotaExceededError`의 시그니처
+
+**왜 필요한가**
+
+Task 4의 `readJson`은 `response.status === 403 && body.includes('quotaExceeded')` 로만
+쿼터 소진을 판별한다. 그런데 Google은 같은 "요청을 줄여라" 상황을 두 가지 다른 방식으로도
+알린다.
+
+- 403 + `rateLimitExceeded` 또는 `userRateLimitExceeded` (초당·분당 요청 제한)
+- 429 (레이트리밋)
+
+이 둘은 현재 일반 `Error`로 던져진다. Task 6은 `QuotaExceededError`만 잡아 캐시 폴백으로
+전환하므로, 레이트리밋에 걸리면 우아한 degrade 대신 크래시 화면이 뜬다. 우아한 degrade를
+위해 만든 장치가 정작 가장 흔한 경우에 작동하지 않는다.
+
+배너 문구도 함께 고친다. "오늘 검색 한도에 도달했어요"는 일일 쿼터에는 맞지만 분당
+레이트리밋에는 틀린 설명이다. 두 경우 모두에 정확한 문구로 바꾼다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/youtube.test.ts`의 import에 `isQuotaFailure`를 추가하고, 기존
+`describe('searchShorts', ...)` 블록 **뒤에** 아래를 추가한다.
+
+```ts
+describe('isQuotaFailure', () => {
+  it('403 + quotaExceeded 는 쿼터 소진이다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"quotaExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + rateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}')).toBe(true)
+  })
+
+  it('403 + userRateLimitExceeded 는 쿼터 소진으로 본다', () => {
+    expect(
+      isQuotaFailure(403, '{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}'),
+    ).toBe(true)
+  })
+
+  it('429 는 본문과 무관하게 쿼터 소진이다', () => {
+    expect(isQuotaFailure(429, '')).toBe(true)
+  })
+
+  it('쿼터와 무관한 403 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(403, '{"error":{"errors":[{"reason":"forbidden"}]}}')).toBe(false)
+  })
+
+  it('500 은 쿼터 소진이 아니다', () => {
+    expect(isQuotaFailure(500, 'quotaExceeded')).toBe(false)
+  })
+})
+```
+
+그리고 `describe('searchShorts', ...)` 안에 아래 3개를 추가한다.
+
+```ts
+  it('403 rateLimitExceeded 면 QuotaExceededError를 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'rateLimitExceeded' }] } }, { status: 403 }),
+      ),
+    )
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('429 면 QuotaExceededError를 던진다', async () => {
+    server.use(http.get(SEARCH, () => HttpResponse.json({}, { status: 429 })))
+
+    await expect(searchShorts('스쿼트', 'test-key')).rejects.toBeInstanceOf(QuotaExceededError)
+  })
+
+  it('쿼터와 무관한 403 은 일반 Error로 던진다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'forbidden' }] } }, { status: 403 }),
+      ),
+    )
+
+    const promise = searchShorts('스쿼트', 'test-key')
+    await expect(promise).rejects.toThrow(/403/)
+    await expect(promise).rejects.not.toBeInstanceOf(QuotaExceededError)
+  })
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/youtube.test.ts`
+Expected: FAIL — `isQuotaFailure` is not exported. 그리고 rateLimitExceeded·429 테스트가
+`QuotaExceededError` 대신 일반 `Error`를 받아 실패한다.
+
+- [ ] **Step 3: 판별 로직 분리와 확장**
+
+`src/lib/youtube.ts`에서 `readJson`의 403 조건을 아래로 교체한다.
+
+```ts
+/** Google이 "요청을 줄여라"를 알리는 세 가지 이유. */
+const QUOTA_REASONS = ['quotaExceeded', 'rateLimitExceeded', 'userRateLimitExceeded']
+
+/**
+ * 쿼터·레이트리밋 소진인지 판별한다.
+ * Task 6은 이 신호만 잡아 캐시 폴백으로 전환하고 나머지 오류는 실제 실패로 흘린다.
+ * 429는 본문을 보지 않는다 — 429 자체가 레이트리밋이다.
+ */
+export function isQuotaFailure(status: number, body: string): boolean {
+  if (status === 429) return true
+  if (status !== 403) return false
+  return QUOTA_REASONS.some((reason) => body.includes(reason))
+}
+
+async function readJson<T>(response: Response, label: string): Promise<T> {
+  if (response.ok) return (await response.json()) as T
+
+  const body = await response.text()
+  if (isQuotaFailure(response.status, body)) {
+    throw new QuotaExceededError()
+  }
+  throw new Error(`YouTube ${label} 호출 실패: ${response.status} ${body}`)
+}
+```
+
+`QuotaExceededError`의 메시지도 레이트리밋을 포함하도록 바꾼다.
+
+```ts
+export class QuotaExceededError extends Error {
+  constructor() {
+    super('YouTube API quota or rate limit exceeded')
+    this.name = 'QuotaExceededError'
+  }
+}
+```
+
+- [ ] **Step 4: 테스트가 통과하는지 확인**
+
+Run: `npm test`
+Expected: PASS — 52 tests passed (기존 43 + `isQuotaFailure` 6개 + `searchShorts` 3개)
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add src/lib/youtube.ts tests/unit/youtube.test.ts
+git commit -m "fix: 레이트리밋(403 rateLimitExceeded, 429)도 쿼터 소진으로 판별
+
+Task 6은 QuotaExceededError만 잡아 캐시 폴백으로 전환한다.
+레이트리밋이 일반 Error로 던져지면 우아한 degrade 대신 크래시 화면이 뜬다."
+```
+
+---
+
 ### Task 6: 검색 오케스트레이션과 API 라우트
 
 **Files:**
@@ -1129,6 +1900,7 @@ git commit -m "feat: Supabase 검색 캐시 추가 (7일 TTL, 장애 시 무해�
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { clearMemoryCache } from '@/lib/searchCache'
 import { getVideos } from '@/lib/videoSearch'
 
 const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
@@ -1142,9 +1914,13 @@ afterAll(() => server.close())
 
 beforeEach(() => {
   process.env.YOUTUBE_API_KEY = 'test-key'
-  // 캐시를 끈 상태로 순수 조회 경로를 검증한다.
+  // Supabase를 끊어 순수 조회 경로를 검증한다.
   delete process.env.SUPABASE_URL
   delete process.env.SUPABASE_SERVICE_ROLE_KEY
+  // Supabase가 없으면 Task 5b의 메모리 폴백이 동작한다.
+  // 비우지 않으면 앞 테스트가 채운 항목을 뒤 테스트가 캐시 히트로 받아
+  // YouTube 호출이 일어나지 않고, 쿼터·오류·키 누락 테스트가 모두 무의미해진다.
+  clearMemoryCache()
 })
 
 function mockYouTube(items: Array<{ id: string; duration: string }>) {
@@ -1298,6 +2074,161 @@ Expected: 빌드 성공, 44 tests passed
 ```bash
 git add src/lib/videoSearch.ts src/app/api tests/unit/videoSearch.test.ts
 git commit -m "feat: 캐시 우선 검색 오케스트레이션과 /api/videos 라우트 추가"
+```
+
+---
+
+### Task 6b: 캐시 히트와 stale 폴백을 실제로 검증
+
+**Files:**
+- Modify: `tests/unit/videoSearch.test.ts`
+- Modify: `src/lib/videoSearch.ts`
+
+**Interfaces:**
+- `getVideos`의 시그니처는 그대로다. 쿼터 경로의 `fromCache` 값만 정직해진다
+
+**왜 필요한가**
+
+Task 6 리뷰가 잡은 두 가지 커버리지 구멍이다.
+
+**1. 캐시 히트 분기를 아무 테스트도 지나가지 않는다.** 5개 테스트가 모두 빈 검색어로
+빠지거나, `beforeEach`가 비운 캐시에서 미스를 받거나, 오류로 끝난다. "캐시 우선 검색"의
+핵심 승리 조건 — 네트워크를 건너뛰고 캐시를 반환하는 것 — 이 검증되지 않는다.
+
+**2. 쿼터 테스트가 stale 폴백을 증명하지 못한다.** 만료된 캐시를 심어두지 않으므로
+`readCache(query, { allowStale: true })`는 이 테스트에서 어차피 `null`을 반환한다.
+**폴백 재조회를 아예 생략하고 빈 배열만 반환하는 구현도 똑같이 통과한다.** 이 테스트는
+"stale 데이터가 없을 때의 결과 모양"만 확인하지, 폴백이 일어난다는 것을 확인하지 않는다.
+
+리뷰어는 `await writeCache`를 fire-and-forget으로 바꾸자고 제안했으나 **거절한다.**
+서버리스에서는 응답을 보낸 뒤 떠 있는 프로미스가 완료된다는 보장이 없다. `await`를 빼면
+인스턴스가 얼어붙어 캐시가 영영 기록되지 않을 수 있고, 그러면 캐시의 존재 이유가 사라진다.
+지연을 감수하는 쪽이 맞다. 대신 이유를 주석으로 남겨 다음 사람이 같은 제안을 반복하지
+않게 한다.
+
+- [ ] **Step 1: 실패하는 테스트 추가**
+
+`tests/unit/videoSearch.test.ts`의 import에 `writeCache`와 `CACHE_TTL_MS`를 추가하고
+(`@/lib/searchCache`에서), `vi`를 `vitest`에서 가져온다. 아래 두 테스트를
+`describe('getVideos', ...)` 안에 추가한다.
+
+```ts
+  it('캐시에 있으면 YouTube를 호출하지 않는다', async () => {
+    // MSW 핸들러를 등록하지 않는다.
+    // onUnhandledRequest: 'error' 이므로 요청이 나가면 이 테스트가 실패한다.
+    const videos = [
+      {
+        id: 'cached',
+        title: '캐시된 스쿼트',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/cached/hqdefault.jpg',
+        durationSeconds: 45,
+      },
+    ]
+    await writeCache('스쿼트', videos)
+
+    const result = await getVideos('스쿼트')
+
+    expect(result).toEqual({
+      query: '스쿼트',
+      videos,
+      fromCache: true,
+      quotaExceeded: false,
+    })
+  })
+
+  it('쿼터 초과면 만료된 캐시라도 꺼내 온다', async () => {
+    server.use(
+      http.get(SEARCH, () =>
+        HttpResponse.json({ error: { errors: [{ reason: 'quotaExceeded' }] } }, { status: 403 }),
+      ),
+    )
+    const videos = [
+      {
+        id: 'stale',
+        title: '오래된 스쿼트',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/stale/hqdefault.jpg',
+        durationSeconds: 50,
+      },
+    ]
+    await writeCache('스쿼트', videos)
+
+    // TTL을 넘긴 시점으로 이동한다. Date만 가짜로 바꿔 MSW의 비동기 처리를 건드리지 않는다.
+    const realNow = Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(realNow + CACHE_TTL_MS + 1)
+
+    try {
+      const result = await getVideos('스쿼트')
+
+      // 첫 readCache 는 만료로 null → searchShorts 403 → allowStale 재조회로 살아난다.
+      // 폴백 재조회를 생략한 구현이면 videos 가 [] 라 이 단정이 실패한다.
+      expect(result.videos).toEqual(videos)
+      expect(result.quotaExceeded).toBe(true)
+      expect(result.fromCache).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+Run: `npx vitest run tests/unit/videoSearch.test.ts`
+Expected: 두 테스트 모두 실패한다. 첫 번째는 `writeCache`/`CACHE_TTL_MS` import가 없어
+해석 실패, 추가한 뒤에는 통과할 수도 있다 — 그렇다면 **캐시 히트 경로가 원래 맞게
+동작한다는 뜻이므로 정상이다.** 두 번째는 현재 구현에서 통과해야 한다. 두 테스트의 목적은
+버그를 드러내는 것이 아니라 **이미 맞는 동작에 회귀 방지막을 씌우는 것**이다.
+
+다만 Step 3의 `fromCache` 수정 전에는, stale이 없는 기존 쿼터 테스트가
+`fromCache: true`를 기대하고 있으므로 그 테스트는 Step 3 이후 조정이 필요할 수 있다.
+실행해서 확인하고 필요한 만큼만 고친다.
+
+- [ ] **Step 3: 쿼터 경로의 fromCache를 정직하게 만들기**
+
+`src/lib/videoSearch.ts`의 쿼터 폴백 반환을 수정한다.
+
+```ts
+    const stale = await readCache(query, { allowStale: true })
+    // stale 이 없으면 캐시에서 온 것이 아니다. 빈 결과에 "캐시됨"을 붙이면
+    // UI가 "저장된 결과를 보여준다"고 잘못 안내하게 된다.
+    return { query, videos: stale ?? [], fromCache: stale !== null, quotaExceeded: true }
+```
+
+기존 쿼터 테스트(`'쿼터 초과면 quotaExceeded를 표시하고 던지지 않는다'`)가
+`fromCache`를 단정하고 있다면 `false`로 맞춘다 — 그 테스트에는 stale 데이터가 없다.
+
+- [ ] **Step 4: await writeCache 의 이유를 주석으로 남기기**
+
+```ts
+    // 서버리스에서는 응답을 보낸 뒤 떠 있는 프로미스가 완료된다는 보장이 없다.
+    // await 를 빼면 인스턴스가 얼어붙어 캐시가 영영 기록되지 않을 수 있고,
+    // 그러면 쿼터를 아끼려던 캐시의 존재 이유가 사라진다. 지연을 감수한다.
+    await writeCache(query, videos)
+```
+
+- [ ] **Step 5: 전체 확인**
+
+시작 전 `npm test`로 현재 개수를 확인하고 그 값에 **2**를 더한 수를 기대한다.
+
+Run: `npm test`
+Expected: PASS — 기준선 + 2. 출력 깨끗.
+
+Run: `npx tsc --noEmit`
+Expected: 클린
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add tests/unit/videoSearch.test.ts src/lib/videoSearch.ts
+git commit -m "test: 캐시 히트와 stale 폴백을 실제로 검증
+
+캐시 우선 검색의 핵심 승리 조건(네트워크를 건너뛰고 캐시 반환)을 어떤 테스트도
+지나가지 않았다. 쿼터 테스트도 만료된 캐시를 심지 않아 폴백 재조회를 생략한
+구현이 똑같이 통과했다.
+
+쿼터 경로의 fromCache 가 stale 유무와 무관하게 true 였던 것도 함께 고쳤다."
 ```
 
 ---
@@ -1493,7 +2424,7 @@ export default function QuotaBanner() {
       data-testid="quota-banner"
       className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-text"
     >
-      오늘 검색 한도에 도달했어요. 이미 찾아둔 운동은 계속 볼 수 있습니다.
+      검색 한도에 걸렸어요. 이미 찾아둔 운동은 계속 볼 수 있습니다.
     </p>
   )
 }
@@ -1503,12 +2434,23 @@ export default function QuotaBanner() {
 
 `getVideos`가 쿼터 외의 이유로 실패하면 예외가 서버 컴포넌트를 통과한다. 라우트 그룹에 에러 경계를 둬서 앱 전체가 죽는 대신 재시도 버튼을 보여준다.
 
+**`reset`이 아니라 `unstable_retry`를 쓴다.** Next 16.2에서 `reset()`은 에러 경계 상태만 지우고 서버 데이터를 다시 가져오지 않는다. 네트워크 실패에서 회복하려면 재요청이 일어나야 하므로 `reset()`으로는 버튼이 제 일을 못 한다. 번들 문서(`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/error.md`)가 `unstable_retry()`를 권장한다.
+
 `src/app/(tabs)/error.tsx`:
 
 ```tsx
 'use client'
 
-export default function TabsError({ reset }: { error: Error; reset: () => void }) {
+/**
+ * reset() 은 에러 상태만 지우고 서버 데이터를 재요청하지 않는다.
+ * 네트워크 실패 회복에는 재요청이 필요하므로 unstable_retry() 를 쓴다.
+ */
+export default function TabsError({
+  unstable_retry,
+}: {
+  error: Error & { digest?: string }
+  unstable_retry: () => void
+}) {
   return (
     <div
       data-testid="error-state"
@@ -1518,7 +2460,7 @@ export default function TabsError({ reset }: { error: Error; reset: () => void }
       <p className="mt-1 text-xs text-muted">네트워크를 확인한 뒤 다시 시도해 주세요.</p>
       <button
         type="button"
-        onClick={reset}
+        onClick={() => unstable_retry()}
         className="mt-4 h-10 rounded-xl bg-accent px-5 text-sm font-semibold text-bg"
       >
         다시 시도
@@ -2094,8 +3036,10 @@ npm test
 npm run test:e2e
 npm run build
 npx tsc --noEmit
-npx next lint
+npm run lint
 ```
+
+`next lint`는 Next 16에서 제거됐다. `create-next-app`이 만든 `lint` 스크립트(ESLint 직접 호출)를 쓴다.
 
 Expected: 모두 통과
 
@@ -2122,6 +3066,142 @@ git push -u origin main
 
 ---
 
+### Task 11: 마무리 정리
+
+**Files:**
+- Modify: `tests/e2e/mock-youtube.mjs`
+- Modify: `tests/e2e/search-feed.spec.ts`
+- Modify: `src/lib/youtube.ts`
+- Modify: `tests/unit/youtube.test.ts`
+- Delete: `public/*.svg` (스캐폴드 잔여물)
+
+**왜 필요한가**
+
+리뷰가 태스크를 가로질러 반복 지적한 두 가지와, 스캐폴드 잔여물을 한 번에 정리한다.
+
+**1. `error-state`에 커버리지가 없다.** Task 9 리뷰의 지적이다. 여섯 개 `data-testid` 중
+`video-card`, `empty-state`, `quota-banner`, `feed-slide`, `back-button`은 전부 E2E가
+지나가지만 `error-state`만 없다. 이건 쿼터가 아닌 오류(네트워크 실패, YouTube 500 등)에서
+나오는 재시도 화면이고, Task 4b에서 확인했듯 그 경로는 쿼터 경로와 **다르게** 동작한다.
+검증 없이 남기면 재시도 버튼이 실제로 복구시키는지 아무도 모른다.
+
+**2. 빈 썸네일 URL.** Task 4와 Task 7 리뷰가 각각 지적했다. `pickThumbnail`이 high/medium/
+default를 모두 못 찾으면 `''`를 반환하고, 그 칸은 깨진 이미지가 된다. 영상 ID만 있으면
+`https://i.ytimg.com/vi/{id}/hqdefault.jpg`가 항상 유효하므로 결정적 폴백이 가능하다.
+
+- [ ] **Step 1: 모의 서버에 오류 케이스 추가**
+
+`tests/e2e/mock-youtube.mjs`에서 `쿼터초과` 처리 **위에** 추가한다. 쿼터 판별 대상이
+아닌 500을 반환해 일반 오류 경로를 태운다.
+
+```js
+  if (query.includes('서버오류')) {
+    res.statusCode = 500
+    res.end(JSON.stringify({ error: { message: 'internal error' } }))
+    return
+  }
+```
+
+- [ ] **Step 2: 실패하는 E2E 추가**
+
+`tests/e2e/search-feed.spec.ts` 맨 아래에 추가한다.
+
+```ts
+test('쿼터 외의 오류는 재시도 화면을 보여준다', async ({ page }) => {
+  await page.goto('/?q=서버오류')
+
+  await expect(page.getByTestId('error-state')).toBeVisible()
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible()
+})
+```
+
+- [ ] **Step 3: 확인**
+
+Run: `npm run test:e2e`
+Expected: 6 passed
+
+`error-state`가 안 나오고 Next의 기본 오류 화면이 뜨면 `(tabs)/error.tsx`가 이 경로를
+잡지 못하는 것이다. **그건 진짜 버그이므로 테스트를 고치지 말고 보고한다.**
+
+- [ ] **Step 4: 빈 썸네일에 결정적 폴백**
+
+`src/lib/youtube.ts`의 `pickThumbnail`은 `item.id`를 모르므로 시그니처를 바꾼다.
+
+```ts
+/**
+ * high → medium → default 순으로 고르고, 셋 다 없으면 영상 ID로 URL을 만든다.
+ * hqdefault.jpg 는 모든 영상 ID에 대해 유효하므로 빈 문자열을 반환할 일이 없다.
+ * 빈 src 는 예외를 던지지 않고 깨진 이미지 칸으로 남아 조용히 나쁘다.
+ */
+function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails'], videoId: string): string {
+  return (
+    thumbnails.high?.url ??
+    thumbnails.medium?.url ??
+    thumbnails.default?.url ??
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+  )
+}
+```
+
+호출부를 `pickThumbnail(item.snippet.thumbnails, item.id)`로 바꾼다.
+
+- [ ] **Step 5: 폴백 단위 테스트 추가**
+
+`tests/unit/youtube.test.ts`의 `describe('searchShorts', ...)`에 추가한다.
+
+```ts
+  it('썸네일이 하나도 없으면 영상 ID로 URL을 만든다', async () => {
+    server.use(
+      http.get(SEARCH, () => HttpResponse.json({ items: [{ id: { videoId: 'a' } }] })),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'a',
+              snippet: { title: '제목 a', channelTitle: '헬스톡', thumbnails: {} },
+              contentDetails: { duration: 'PT30S' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const result = await searchShorts('스쿼트', 'test-key')
+
+    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/hqdefault.jpg')
+  })
+```
+
+- [ ] **Step 6: 스캐폴드 잔여물 정리**
+
+`public/` 안의 `create-next-app` 기본 SVG들(`next.svg`, `vercel.svg`, `file.svg`,
+`globe.svg`, `window.svg` 등)은 어디서도 참조되지 않는다. 지운다.
+
+`AGENTS.md`와 `CLAUDE.md`는 **남긴다.** Next 16이 번들 문서를 읽으라고 안내하는 내용이라
+이 저장소에서 실제로 유용했다.
+
+- [ ] **Step 7: 전체 확인**
+
+Run: `npm test` → 기존 개수 + 1
+Run: `npm run test:e2e` → 6 passed
+Run: `npm run build`, `npx tsc --noEmit`, `npm run lint` → 전부 클린
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add -A
+git commit -m "fix: error-state E2E 커버리지와 결정적 썸네일 폴백 추가
+
+리뷰가 태스크를 가로질러 반복 지적한 둘을 정리한다.
+
+- error-state 만 E2E 가 지나가지 않았다. 쿼터가 아닌 오류의 재시도 화면이라
+  쿼터 경로와 다르게 동작하는데 검증이 없었다.
+- pickThumbnail 이 빈 문자열을 반환할 수 있어 깨진 이미지 칸이 된다.
+  hqdefault.jpg 는 모든 영상 ID에 유효하므로 결정적 폴백이 가능하다."
+```
+
+---
+
 ## 단계 1 완료 기준
 
 | 항목 | 확인 방법 |
@@ -2136,6 +3216,45 @@ git push -u origin main
 | 캐시가 쿼터를 아낀다 | 같은 검색어 2회 실행 시 `fromCache: true` |
 | API 키가 클라이언트에 노출되지 않는다 | `npm run build` 후 `grep -r "YOUTUBE_API_KEY" .next/static` 결과 없음 |
 | 다크 팔레트가 적용된다 | 배포 화면 육안 확인 |
+
+## 미뤄둔 결함: Supabase 장애 시 검색이 7초 이상 느려진다
+
+**발견 경위.** Task 5d에서 `HttpResponse.error()`로 전송 실패를 흉내냈더니 테스트가
+여전히 7초 걸렸다. 원인은 postgrest-js가 멱등 GET 요청에 대해 **1초 + 2초 + 4초 백오프로
+재시도**하기 때문이다.
+
+**프로덕션에 미치는 영향.** `SUPABASE_URL`이 설정돼 있는데 Supabase가 닿지 않으면
+`readCache`가 약 7초를 소모한 뒤 `null`을 반환하고, `writeCache`도 같은 대가를 치른다.
+검색 한 번에 10초 이상이 얹힌다. "캐시 장애는 느려질 뿐 실패하지 않는다"는 설계 의도가
+실제로는 "캐시 장애 시 앱이 거의 못 쓰게 된다"가 된다.
+
+여기서 더 나쁜 점은, Supabase가 설정돼 있으면 `getClient()`가 클라이언트를 반환하므로
+**메모리 폴백이 동작하지 않는다**는 것이다. 장애 중에는 캐시도 없고 매 요청이 느리다.
+
+**언제 터지는가.** Supabase를 설정하지 않은 상태(현재 기본값)에서는 절대 발생하지 않는다.
+메모리 폴백만 쓰므로 즉시 응답한다. Supabase를 붙인 뒤에만 노출된다.
+
+**고칠 때 반드시 알아야 할 것.** Task 5d 리뷰가 `@supabase/postgrest-js` 소스를 확인해
+밝힌 사실이다. `.throwOnError()`를 쓰지 않으면 postgrest-js는 **모든 실패를 예외가 아니라
+`{ data: null, error }` 로 resolve**해서 돌려준다. 전송 수준 실패도 재시도가 소진된 뒤
+같은 형태가 된다. 따라서:
+
+- `searchCache.ts`의 `catch (cause)` 블록은 Supabase 실패에 대해 **도달하지 않는다.**
+  실제 오류는 전부 `if (error)` 분기로 들어간다. 그 `catch`는 `.from()`에 잘못된 입력을
+  넘기는 것처럼 postgrest 기계 바깥에서 던져지는 경우에만 의미가 있다.
+- 그러므로 타임아웃을 `catch`에 기대어 구현하면 **동작하지 않는다.** 프로미스 자체를
+  `Promise.race`로 감싸야 한다.
+
+**고칠 방향.** 단계 1의 화면 작업(Task 7-10)을 끝낸 뒤 별도 태스크로 다룬다.
+
+1. Supabase 호출 프로미스를 타임아웃(2초 정도)으로 감싸 지연을 한계 짓는다.
+   재시도가 라이브러리 내부에서 일어나므로 바깥에서 잘라야 한다.
+2. Supabase 호출이 실패하거나 타임아웃되면 메모리 폴백으로 떨어뜨려, 장애 중에도
+   캐싱이 유지되게 한다.
+3. 타임아웃으로 버린 프로미스에 `.catch(() => {})`를 붙여 unhandled rejection을 막는다.
+
+지금 하지 않는 이유는 UI가 아직 없어 사용자가 앱을 볼 수 없기 때문이다. 이 결함은
+Supabase를 붙이기 전까지 도달 불가능하다.
 
 ## 이 계획에서 의도적으로 뺀 것
 

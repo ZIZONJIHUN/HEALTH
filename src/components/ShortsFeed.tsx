@@ -56,7 +56,11 @@ export default function ShortsFeed({
           }}
           className="h-dvh w-full snap-start snap-always"
         >
-          <FeedSlide video={video} active={Math.abs(index - activeIndex) <= MOUNT_WINDOW} />
+          <FeedSlide
+            video={video}
+            active={Math.abs(index - activeIndex) <= MOUNT_WINDOW}
+            autoplay={index === activeIndex}
+          />
         </div>
       ))}
     </div>

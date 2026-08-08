@@ -5,13 +5,25 @@ import type { ShortVideo } from '@/lib/types'
 /**
  * active 가 false 면 iframe을 만들지 않는다.
  * 슬라이드 수만큼 iframe을 동시에 띄우면 모바일에서 즉시 버벅인다.
+ *
+ * autoplay는 active와 별개다. 마운트 윈도우(±1) 안의 이전/다음 슬라이드도
+ * active로 마운트되어 플레이어 셸을 미리 준비하지만, 화면에 보이지 않는
+ * 동안 스트리밍하면 모바일 데이터와 디코딩 비용만 세 배로 든다.
  */
-export default function FeedSlide({ video, active }: { video: ShortVideo; active: boolean }) {
+export default function FeedSlide({
+  video,
+  active,
+  autoplay,
+}: {
+  video: ShortVideo
+  active: boolean
+  autoplay: boolean
+}) {
   return (
     <div className="relative h-full w-full bg-black">
       {active ? (
         <iframe
-          src={buildEmbedUrl(video.id)}
+          src={buildEmbedUrl(video.id, { autoplay })}
           title={video.title}
           allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen

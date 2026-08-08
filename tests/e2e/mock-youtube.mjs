@@ -30,12 +30,24 @@ function videoItem(entry) {
   }
 }
 
+// '일시오류' 는 첫 /search 요청만 500 을 반환하고, 이후에는 정상 응답한다.
+// unstable_retry() 가 실제로 재요청해서 복구되는지 검증하기 위한 마커.
+// 서버가 뜰 때마다 초기화되어 실행 간 독립적이다.
+let transientFailureUsed = false
+
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`)
   const query = url.searchParams.get('q') ?? ''
   res.setHeader('content-type', 'application/json')
 
   if (query.includes('서버오류')) {
+    res.statusCode = 500
+    res.end(JSON.stringify({ error: { message: 'internal error' } }))
+    return
+  }
+
+  if (query.includes('일시오류') && url.pathname.endsWith('/search') && !transientFailureUsed) {
+    transientFailureUsed = true
     res.statusCode = 500
     res.end(JSON.stringify({ error: { message: 'internal error' } }))
     return

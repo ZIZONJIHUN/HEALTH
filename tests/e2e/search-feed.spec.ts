@@ -56,3 +56,14 @@ test('쿼터 외의 오류는 재시도 화면을 보여준다', async ({ page }
   await expect(page.getByTestId('error-state')).toBeVisible()
   await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible()
 })
+
+test('다시 시도를 누르면 실제로 재요청해서 복구된다', async ({ page }) => {
+  // 모의 서버는 '일시오류' 쿼리의 첫 /search 요청만 500을 준다.
+  await page.goto('/?q=일시오류')
+
+  await expect(page.getByTestId('error-state')).toBeVisible()
+  await page.getByRole('button', { name: '다시 시도' }).click()
+
+  await expect(page.getByTestId('error-state')).toHaveCount(0)
+  await expect(page.getByTestId('video-card').first()).toBeVisible()
+})

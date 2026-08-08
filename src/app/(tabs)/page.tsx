@@ -3,14 +3,15 @@ import EmptyState from '@/components/EmptyState'
 import QuotaBanner from '@/components/QuotaBanner'
 import SearchBar from '@/components/SearchBar'
 import VideoGrid from '@/components/VideoGrid'
+import { firstParam } from '@/lib/searchParams'
 import { getVideos } from '@/lib/videoSearch'
 
 export default async function ExercisePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>
+  searchParams: Promise<{ q?: string | string[] }>
 }) {
-  const { q = '' } = await searchParams
+  const q = firstParam((await searchParams).q) ?? ''
   const result = q.trim() ? await getVideos(q) : null
 
   return (

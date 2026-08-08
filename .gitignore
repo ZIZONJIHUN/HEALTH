@@ -47,5 +47,10 @@ next-env.d.ts
 # superpowers scratch directory (never commit)
 .superpowers/
 
+# Taste Skill 설치물: .agents/skills 는 커밋하고, .claude/skills 는 무시한다.
+# .claude/skills 는 .agents/skills 를 가리키는 절대 경로 심볼릭 링크라 다른 머신에서 깨진다.
+# 재생성: npx skills add Leonxlnx/taste-skill
+/.claude/
+
 # 비밀값이 들어갈 수 있는 공유 기본값 파일도 무시한다 (스캐폴드가 덮어쓰며 사라졌던 규칙)
 .env

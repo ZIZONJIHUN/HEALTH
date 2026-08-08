@@ -1,3 +1,5 @@
+// 다음 단계(외부 클라이언트/네이티브 앱 연동)를 위해 미리 열어 둔 공개 엔드포인트.
+// 현재 src/ 안 어디에서도 이 라우트를 호출하지 않는다.
 import { NextResponse } from 'next/server'
 import { getVideos } from '@/lib/videoSearch'
 

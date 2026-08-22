@@ -3,22 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import FeedSlide from '@/components/FeedSlide'
 import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
-import { CaretDown, CaretUp, ICON_WEIGHT } from '@/components/icons'
+import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/icons'
 import type { ShortVideo } from '@/lib/types'
 
 /** 현재 슬라이드 기준 앞뒤 몇 개까지 iframe을 마운트할지. */
 const MOUNT_WINDOW = 1
 
+/** 영상이 끝났을 때 "다음으로 해보세요"에 몇 개까지 보여줄지. */
+const NEXT_UP_COUNT = 3
+
 export default function ShortsFeed({
   videos,
   initialIndex,
+  routineName,
 }: {
   videos: ShortVideo[]
   initialIndex: number
+  /** 있으면 루틴 재생이다. 반복을 끄고 끝나면 다음 운동을 권한다. */
+  routineName?: string
 }) {
   const [activeIndex, setActiveIndex] = useState(initialIndex)
+  const [endedIndex, setEndedIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<Array<HTMLDivElement | null>>([])
+  const routineMode = routineName != null
 
   // 그리드에서 누른 영상으로 바로 이동한다.
   useEffect(() => {
@@ -31,7 +39,11 @@ export default function ShortsFeed({
         for (const entry of entries) {
           if (!entry.isIntersecting) continue
           const index = Number((entry.target as HTMLElement).dataset.index)
-          if (!Number.isNaN(index)) setActiveIndex(index)
+          if (Number.isNaN(index)) continue
+          setActiveIndex(index)
+          // 슬라이드가 바뀌면 이전 영상의 종료 화면은 의미가 없다.
+          // 멈춰 있는 슬라이드는 관찰자를 다시 깨우지 않으므로 방금 뜬 종료 화면을 지우지 않는다.
+          setEndedIndex(null)
         }
       },
       { root: containerRef.current, threshold: 0.6 },
@@ -46,6 +58,7 @@ export default function ShortsFeed({
   const goTo = useCallback(
     (index: number) => {
       const clamped = Math.min(Math.max(index, 0), videos.length - 1)
+      setEndedIndex(null)
       slideRefs.current[clamped]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     },
     [videos.length],
@@ -87,6 +100,7 @@ export default function ShortsFeed({
 
   const atFirst = activeIndex <= 0
   const atLast = activeIndex >= videos.length - 1
+  const nextUp = videos.slice(activeIndex + 1, activeIndex + 1 + NEXT_UP_COUNT)
 
   return (
     // data-feed-root: globals.css 가 이 속성을 보고 바깥 스크롤과 스크롤바 자리를 끈다.
@@ -109,10 +123,21 @@ export default function ShortsFeed({
               video={video}
               active={Math.abs(index - activeIndex) <= MOUNT_WINDOW}
               autoplay={index === activeIndex}
+              onEnded={
+                routineMode && index === activeIndex
+                  ? () => setEndedIndex(index)
+                  : undefined
+              }
             />
           </div>
         ))}
       </div>
+
+      {routineMode ? (
+        <p className="pointer-events-none absolute top-3 left-1/2 z-50 max-w-[50%] -translate-x-1/2 truncate rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-accent backdrop-blur-sm">
+          {routineName}
+        </p>
+      ) : null}
 
       <p
         aria-live="polite"
@@ -141,6 +166,79 @@ export default function ShortsFeed({
           </div>
         </div>
       </div>
+
+      {routineMode && endedIndex === activeIndex ? (
+        <NextUpPanel
+          nextUp={nextUp}
+          startIndex={activeIndex + 1}
+          onPick={goTo}
+          onDismiss={() => setEndedIndex(null)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * 영상이 끝나면 뜨는 "다음으로 해보세요".
+ *
+ * 자동 감지(useVideoEnded)가 실패하는 환경이 있을 수 있어, 이 화면이 안 떠도
+ * 사용자는 스와이프나 화살표 버튼으로 다음 운동에 갈 수 있다. 여기는 지름길이다.
+ */
+function NextUpPanel({
+  nextUp,
+  startIndex,
+  onPick,
+  onDismiss,
+}: {
+  nextUp: ShortVideo[]
+  startIndex: number
+  onPick: (index: number) => void
+  onDismiss: () => void
+}) {
+  return (
+    <div
+      data-testid="next-up"
+      className="absolute inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-2xl border-t border-border bg-bg/95 p-4 backdrop-blur-xl"
+      style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-semibold text-text">
+          {nextUp.length ? '다음으로 해보세요' : '루틴을 끝냈어요'}
+        </p>
+        <button
+          type="button"
+          aria-label="닫기"
+          onClick={onDismiss}
+          className="-mt-1 -mr-1 flex h-7 w-7 items-center justify-center rounded-full text-dim hover:bg-surface2 hover:text-text"
+        >
+          <X size={14} weight={ICON_WEIGHT} aria-hidden />
+        </button>
+      </div>
+
+      {nextUp.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">수고했어요. 위로 넘겨 다시 볼 수 있어요.</p>
+      ) : (
+        <ul className="mt-3 space-y-1.5">
+          {nextUp.map((video, offset) => (
+            <li key={video.id}>
+              <button
+                type="button"
+                onClick={() => onPick(startIndex + offset)}
+                className="flex w-full items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2.5 text-left hover:border-accent-dim hover:bg-surface2"
+              >
+                <span aria-hidden className="text-sm">
+                  🔥
+                </span>
+                <span className="line-clamp-1 flex-1 text-[13px] font-medium text-text">
+                  {video.title}
+                </span>
+                <ArrowRight size={14} weight={ICON_WEIGHT} aria-hidden className="text-dim" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

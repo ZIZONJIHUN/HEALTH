@@ -2,18 +2,22 @@ import { Suspense } from 'react'
 import BodyPanel from '@/components/BodyPanel'
 import EmptyState from '@/components/EmptyState'
 import QuotaBanner from '@/components/QuotaBanner'
+import ResultToolbar from '@/components/ResultToolbar'
 import SearchHeader from '@/components/SearchHeader'
 import SuggestPanel from '@/components/SuggestPanel'
 import VideoGrid, { VideoGridSkeleton } from '@/components/VideoGrid'
+import { filterByLength, toLengthFilter } from '@/lib/lengthFilter'
 import { firstParam } from '@/lib/searchParams'
 import { getVideos } from '@/lib/videoSearch'
 
 export default async function ExercisePage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string | string[] }>
+  searchParams: Promise<{ q?: string | string[]; len?: string | string[] }>
 }) {
-  const q = firstParam((await searchParams).q) ?? ''
+  const params = await searchParams
+  const q = firstParam(params.q) ?? ''
+  const len = firstParam(params.len)
   const searching = q.trim().length > 0
 
   return (
@@ -21,8 +25,7 @@ export default async function ExercisePage({
       DOM 순서는 모바일 기준(머리말 → 인체도 → 결과)으로 두고, 데스크톱에서는
       그리드 배치로 인체도만 왼쪽 레일로 보낸다. order 로 뒤집으면 탭 순서가
       화면 순서와 어긋난다.
-    */
-    /*
+
       grid-rows 를 auto/1fr 로 고정하지 않으면, 두 행에 걸친 왼쪽 레일의 높이가
       두 행에 나눠 배분되면서 머리말과 결과 사이에 빈 공간이 생긴다.
     */
@@ -46,10 +49,10 @@ export default async function ExercisePage({
             느린 건 getVideos 뿐이다. 검색창과 칩은 즉시 보내고 결과만 스트리밍해서,
             검색을 기다리는 동안에도 다른 검색어를 칠 수 있게 한다.
             (loading.tsx 를 쓰면 검색창까지 스켈레톤으로 사라진다.)
-            key 를 붙여야 검색어가 바뀔 때마다 폴백이 다시 뜬다.
+            key 에 길이 필터까지 넣어야 필터를 바꿀 때도 폴백이 다시 뜬다.
           */
-          <Suspense key={q} fallback={<VideoGridSkeleton />}>
-            <SearchResults query={q} />
+          <Suspense key={`${q}:${len ?? 'all'}`} fallback={<VideoGridSkeleton />}>
+            <SearchResults query={q} lengthParam={len} />
           </Suspense>
         ) : (
           <SuggestPanel />
@@ -59,8 +62,16 @@ export default async function ExercisePage({
   )
 }
 
-async function SearchResults({ query }: { query: string }) {
+async function SearchResults({
+  query,
+  lengthParam,
+}: {
+  query: string
+  lengthParam: string | undefined
+}) {
   const result = await getVideos(query)
+  const filter = toLengthFilter(lengthParam)
+  const videos = filterByLength(result.videos, filter.maxSeconds)
 
   return (
     <div className="space-y-4">
@@ -69,7 +80,21 @@ async function SearchResults({ query }: { query: string }) {
       {result.videos.length === 0 ? (
         <EmptyState query={result.query} />
       ) : (
-        <VideoGrid query={result.query} videos={result.videos} />
+        <>
+          <ResultToolbar
+            query={result.query}
+            shown={videos.length}
+            total={result.videos.length}
+            activeFilter={filter.id}
+          />
+          {videos.length === 0 ? (
+            <p className="rounded-xl border border-border bg-surface px-4 py-6 text-center text-sm text-muted">
+              이 길이에 맞는 영상이 없어요. 필터를 넓혀보세요.
+            </p>
+          ) : (
+            <VideoGrid query={result.query} videos={videos} lengthFilter={filter.id} />
+          )}
+        </>
       )}
     </div>
   )

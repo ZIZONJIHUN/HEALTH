@@ -67,3 +67,48 @@ test('다시 시도를 누르면 실제로 재요청해서 복구된다', async 
   await expect(page.getByTestId('error-state')).toHaveCount(0)
   await expect(page.getByTestId('video-card').first()).toBeVisible()
 })
+
+test('영상을 루틴에 담아 이어서 볼 수 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+
+  // 첫 영상을 담으면서 루틴을 새로 만든다.
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('가슴 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  // 두 번째 영상은 이미 있는 루틴에 담는다.
+  await page.getByTestId('add-to-routine').nth(1).click()
+  await page.getByRole('button', { name: /가슴 루틴/ }).click()
+
+  await page.goto('/routines')
+  await expect(page.getByRole('heading', { name: '가슴 루틴' })).toBeVisible()
+  await expect(page.getByTestId('routine-item')).toHaveCount(2)
+
+  // 루틴 재생은 localStorage 의 메타데이터만 쓴다. YouTube 를 다시 부르지 않는다.
+  await page.getByTestId('start-routine').click()
+  await expect(page).toHaveURL(/\/feed\?routine=.+&i=0/)
+  await expect(page.getByTestId('feed-slide')).toHaveCount(2)
+})
+
+test('담은 운동의 순서를 바꾸고 뺄 수 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('등 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.getByTestId('add-to-routine').nth(1).click()
+  await page.getByRole('button', { name: /등 루틴/ }).click()
+
+  await page.goto('/routines')
+  const first = page.getByTestId('routine-item').first()
+  await expect(first).toContainText('스쿼트 기본 자세')
+
+  await page.getByRole('button', { name: /무릎 안 아픈 스쿼트 위로/ }).click()
+  await expect(page.getByTestId('routine-item').first()).toContainText('무릎 안 아픈')
+
+  await page.getByRole('button', { name: /스쿼트 기본 자세 빼기/ }).click()
+  await expect(page.getByTestId('routine-item')).toHaveCount(1)
+})

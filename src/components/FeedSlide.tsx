@@ -1,6 +1,10 @@
+'use client'
+
+import { useRef } from 'react'
 import Image from 'next/image'
 import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
 import { buildEmbedUrl } from '@/lib/embed'
+import { useVideoEnded } from '@/lib/useVideoEnded'
 import type { ShortVideo } from '@/lib/types'
 
 /**
@@ -10,16 +14,26 @@ import type { ShortVideo } from '@/lib/types'
  * autoplay는 active와 별개다. 마운트 윈도우(±1) 안의 이전/다음 슬라이드도
  * active로 마운트되어 플레이어 셸을 미리 준비하지만, 화면에 보이지 않는
  * 동안 스트리밍하면 모바일 데이터와 디코딩 비용만 세 배로 든다.
+ *
+ * onEnded 가 있으면 루틴 재생이다. 이때만 반복을 끄고 끝을 감지한다 —
+ * loop=1 이면 영상이 영원히 끝나지 않아 "다음 운동"을 띄울 시점이 없다.
  */
 export default function FeedSlide({
   video,
   active,
   autoplay,
+  onEnded,
 }: {
   video: ShortVideo
   active: boolean
   autoplay: boolean
+  onEnded?: () => void
 }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const routineMode = onEnded != null
+
+  useVideoEnded(iframeRef, active && autoplay, onEnded)
+
   return (
     <div className="relative flex h-full w-full items-center justify-center bg-black">
       {/* 데스크톱에서는 9:16 플레이어 양옆이 비는데, 검은 여백만 두면 화면이 죽는다.
@@ -38,7 +52,12 @@ export default function FeedSlide({
       >
         {active ? (
           <iframe
-            src={buildEmbedUrl(video.id, { autoplay })}
+            ref={iframeRef}
+            src={buildEmbedUrl(video.id, {
+              autoplay,
+              loop: !routineMode,
+              enableJsApi: routineMode,
+            })}
             title={video.title}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen

@@ -24,6 +24,7 @@ export default function TopNav() {
           <ul className="flex items-center gap-1">
             {TABS.map((tab) => {
               const active = pathname === tab.href
+              const Icon = tab.icon
               return (
                 <li key={tab.href}>
                   <Link
@@ -35,7 +36,7 @@ export default function TopNav() {
                         : 'text-muted hover:bg-surface2 hover:text-text'
                     }`}
                   >
-                    <Barbell size={16} weight={ICON_WEIGHT} aria-hidden />
+                    <Icon size={16} weight={ICON_WEIGHT} aria-hidden />
                     {tab.label}
                   </Link>
                 </li>

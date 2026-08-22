@@ -85,6 +85,21 @@
     color: var(--color-accent-fg);
   }
 
+  /*
+   * 필름 그레인. 완전히 평평한 단색 다크는 화면이 죽어 보인다.
+   * 3.5% 짜리 노이즈 한 겹이면 표면에 질감이 생긴다.
+   * z-index 9 — 본문 위, 네비(40)와 오버레이(50) 아래.
+   */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
   /* -------------------------------------------------------------------------
    * 커서
    *
@@ -231,6 +246,25 @@
   }
   50% {
     opacity: 0.45;
+  }
+}
+
+/**
+ * 카드가 한꺼번에 튀어나오면 싸구려로 보인다. 아주 짧게 어긋나며 올라오게 한다.
+ * 지연은 호출부에서 animation-delay 로 준다.
+ */
+@utility card-enter {
+  animation: card-enter 420ms var(--ease-out-quint) both;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 

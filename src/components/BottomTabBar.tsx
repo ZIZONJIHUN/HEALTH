@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { TABS } from '@/data/navigation'
-import { Barbell, ICON_WEIGHT } from '@/components/icons'
+import { ICON_WEIGHT } from '@/components/icons'
 
 /** 데스크톱에서는 TopNav 가 대신한다 (md 이상에서 숨긴다). */
 export default function BottomTabBar() {
@@ -18,6 +18,7 @@ export default function BottomTabBar() {
       <ul className="mx-auto flex max-w-md">
         {TABS.map((tab) => {
           const active = pathname === tab.href
+          const Icon = tab.icon
           return (
             <li key={tab.href} className="flex-1">
               <Link
@@ -27,7 +28,7 @@ export default function BottomTabBar() {
                   active ? 'text-accent' : 'text-dim hover:text-muted'
                 }`}
               >
-                <Barbell size={22} weight={active ? 'fill' : ICON_WEIGHT} aria-hidden />
+                <Icon size={22} weight={active ? 'fill' : ICON_WEIGHT} aria-hidden />
                 {tab.label}
               </Link>
             </li>

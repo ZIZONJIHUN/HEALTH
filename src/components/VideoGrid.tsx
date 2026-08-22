@@ -4,11 +4,15 @@ import { formatDuration } from '@/lib/duration'
 import { Play } from '@/components/icons'
 import type { ShortVideo } from '@/lib/types'
 
-/** 그리드 열 수가 브레이크포인트마다 달라지므로 sizes 도 같이 맞춰야 한다. */
+/**
+ * lg 이상에서는 왼쪽에 인체도 레일(320~360px)이 붙으므로 그리드가 쓸 수 있는 폭이
+ * 그만큼 줄어든다. sizes 도 그 폭 기준으로 잡아야 과한 해상도를 안 받는다.
+ */
 const THUMBNAIL_SIZES =
-  '(min-width: 1280px) 19vw, (min-width: 1024px) 23vw, (min-width: 640px) 31vw, 46vw'
+  '(min-width: 1536px) 17vw, (min-width: 1280px) 20vw, (min-width: 1024px) 26vw, (min-width: 640px) 31vw, 46vw'
 
-const GRID_CLASSES = 'grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5'
+const GRID_CLASSES =
+  'grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'
 
 export default function VideoGrid({ query, videos }: { query: string; videos: ShortVideo[] }) {
   return (

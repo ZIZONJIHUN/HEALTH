@@ -40,6 +40,23 @@ npm run seed        # 인기 운동 20개 캐시 시드 (Supabase 필수 — 없
 npm run cache:check # Supabase 캐시 왕복 확인
 ```
 
+## 에셋
+
+폰트와 3D 모델은 빌드 결과물을 저장소에 커밋해 둔다. 배포 시 네트워크를 타지 않는다.
+다시 만들 일이 생기면 아래 스크립트를 쓴다 (평소에는 실행할 필요가 없다).
+
+```bash
+node scripts/fetch-pretendard.mjs                        # Pretendard 자가호스팅 (public/fonts)
+node --max-old-space-size=8192 scripts/build-body-model.mjs  # 3D 인체 모델 (public/models)
+```
+
+`build-body-model.mjs` 는 원본 STL 293MB 를 받아 `.cache/bodyparts3d/` 에 캐시하고
+533KB GLB 로 굽는다. 처음 실행은 몇 분 걸린다.
+
+해부 모델은 [BodyParts3D](https://lifesciencedb.jp/bp3d/), © The Database Center for Life
+Science, licensed under CC Attribution-Share Alike 2.1 Japan. 앱 화면에도 표기가 들어간다
+(`src/components/BodyPanel.tsx`).
+
 E2E는 앱을 3000번이 아닌 **3100번 포트**에서 띄운다. 3000번을 다른 프로세스가 이미 점유하고
 있으면 Playwright의 `reuseExistingServer` 가 그 프로세스를 재사용해 엉뚱한 앱을 테스트하는
 사고가 있었기 때문이다 (`playwright.config.ts` 참고). E2E 스위트는 자체적으로 모의 YouTube

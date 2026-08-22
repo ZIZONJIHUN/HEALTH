@@ -9,7 +9,7 @@ export default function TabsLayout({ children }: { children: React.ReactNode }) 
           데스크톱에는 탭바가 없으므로 여백을 줄인다. */}
       <main
         id="main"
-        className="mx-auto w-full max-w-md px-4 pb-28 pt-6 sm:max-w-2xl sm:px-6 md:max-w-4xl md:pb-16 md:pt-10 lg:max-w-5xl xl:max-w-6xl"
+        className="mx-auto w-full max-w-md px-4 pt-6 pb-28 sm:max-w-2xl sm:px-6 md:max-w-4xl md:pt-10 md:pb-16 lg:max-w-6xl xl:max-w-[1500px]"
       >
         {children}
       </main>

@@ -14,7 +14,7 @@ export default function TopNav() {
 
   return (
     <header className="sticky top-0 z-40 hidden border-b border-border bg-bg/80 backdrop-blur-xl md:block">
-      <div className="mx-auto flex h-16 w-full max-w-4xl items-center gap-8 px-6 lg:max-w-5xl xl:max-w-6xl">
+      <div className="mx-auto flex h-16 w-full max-w-4xl items-center gap-8 px-6 lg:max-w-6xl xl:max-w-[1500px]">
         <Link href="/" className="flex items-center gap-2 text-text hover:text-accent">
           <Barbell size={22} weight="fill" className="text-accent" aria-hidden />
           <span className="text-[15px] font-extrabold tracking-tight">헬스 쇼츠</span>

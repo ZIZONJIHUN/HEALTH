@@ -116,3 +116,25 @@ test('담은 운동의 순서를 바꾸고 뺄 수 있다', async ({ page }) => 
   await page.getByRole('button', { name: /스쿼트 기본 자세 빼기/ }).click()
   await expect(page.getByTestId('routine-item')).toHaveCount(1)
 })
+
+test('부위 칩을 누르면 세부 근육이 펼쳐지고 새로고침해도 유지된다', async ({ page }) => {
+  await page.goto('/')
+  // 처음에는 세부 줄이 없다.
+  await expect(page.getByRole('link', { name: '광배근' })).toHaveCount(0)
+
+  await page.getByRole('link', { name: '등', exact: true }).click()
+  await expect(page.getByRole('link', { name: '등 전체' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '광배근' })).toBeVisible()
+
+  await page.getByRole('link', { name: '광배근' }).click()
+  await expect(page.getByRole('link', { name: '광배근' })).toHaveAttribute('aria-current', 'true')
+  // 상위 칩도 함께 켜져 있어야 지금 어느 부위에 있는지 알 수 있다.
+  await expect(page.getByRole('link', { name: '등', exact: true })).toHaveAttribute(
+    'aria-current',
+    'true',
+  )
+
+  // 펼침 상태를 URL 에서 유도하므로 새로고침해도 풀리지 않는다.
+  await page.reload()
+  await expect(page.getByRole('link', { name: '광배근' })).toBeVisible()
+})

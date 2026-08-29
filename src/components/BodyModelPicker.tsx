@@ -1,14 +1,16 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { BODY_PARTS } from '@/data/categories'
+import { ICON_WEIGHT, MagnifyingGlass } from '@/components/icons'
+import { MUSCLE_GROUPS, matchQuery, type MuscleGroup } from '@/data/categories'
 
 /**
  * 3D 해부 모델로 운동 부위를 고른다.
  *
- * 모델은 scripts/build-body-model.mjs 가 굽는다. GLB 의 노드 이름이 곧 BODY_PARTS.id 라
- * 여기서 이름 매핑 테이블을 따로 들지 않는다.
+ * 모델은 scripts/build-body-model.mjs 가 굽는다. GLB 의 노드 이름이 곧
+ * MUSCLE_GROUPS.id 라 여기서 이름 매핑 테이블을 따로 들지 않는다.
+ * 둘이 어긋나면 tests/unit/bodyModel.test.ts 가 잡는다.
  *
  * 접근성: 캔버스는 키보드로 쓸 수 없다. 같은 일을 하는 CategoryChips 를 항상 함께
  * 렌더하고, 이 컴포넌트는 보조 수단으로만 둔다. WebGL 이 없거나 로딩에 실패하면
@@ -18,8 +20,9 @@ import { BODY_PARTS } from '@/data/categories'
 const MODEL_URL = '/models/body.glb'
 const SHELL_NODE = 'shell'
 
-/** 부위 id → 검색어. '전신'은 모델에 대응하는 근육이 없어 빠진다. */
-const PART_BY_ID = new Map(BODY_PARTS.map((part) => [part.id as string, part]))
+const GROUP_BY_ID = new Map<string, MuscleGroup>(
+  MUSCLE_GROUPS.map((group) => [group.id as string, group]),
+)
 
 /**
  * 근육 기본색은 해부 표본의 근조직 톤이다. 차가운 회색으로 두면 시체처럼 보인다.
@@ -32,12 +35,44 @@ const COLOR = {
   shell: 0x1b2330,
 }
 
+/**
+ * 광선이 뚫고 지나간 근육 중 이 깊이 안에 있는 것들을 후보로 본다.
+ * 모델은 키 = 1 이므로 0.03 ≈ 5cm. 몸 반대편까지 넘어가지 않는 폭이다.
+ */
+const PICK_DEPTH_WINDOW = 0.03
+
+/**
+ * 얇은 막이 표면을 덮는 자리에서, 사람이 실제로 고르려는 근육을 우선한다.
+ *
+ * 외복사근의 널힘줄이 복직근 앞을 9mm 덮고 있어서, 그냥 두면 배 한가운데를 눌러도
+ * 항상 '옆구리'가 잡힌다. 배를 누르면 복근이 나와야 한다.
+ *
+ * 기립근은 일부러 넣지 않았다. 광배근이 기립근보다 17mm 뒤에 있어 등 넓은 면을 덮는데,
+ * 기립근을 우선하면 광배근을 고를 수가 없어진다. 광배근이 닿지 않는 척추 양옆 좁은
+ * 띠에서는 지금도 기립근이 그냥 잡히고, 그 밖에서는 칩으로 고르면 된다.
+ */
+const PICK_PRIORITY: ReadonlyArray<{ prefer: string; over: readonly string[] }> = [
+  { prefer: 'core-abs', over: ['core-obliques'] },
+]
+
+/** 모델은 키 = 1 단위로 구워져 있다. fov 28° 에서 2.45 면 세로를 8할쯤 채운다. */
+const DEFAULT_DISTANCE = 2.45
+const MIN_DISTANCE = 1.3
+const MAX_DISTANCE = 3.4
+/** 이만큼 벗어나면 "확대됨"으로 보고 초기화 버튼을 띄운다. */
+const ZOOM_EPSILON = 0.03
+
 type Status = 'loading' | 'ready' | 'failed'
+
+function clampDistance(value: number): number {
+  return Math.min(Math.max(value, MIN_DISTANCE), MAX_DISTANCE)
+}
 
 export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<Status>('loading')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [zoomed, setZoomed] = useState(false)
 
   const router = useRouter()
   // three 쪽 이벤트 핸들러는 마운트 시점의 클로저 안에 갇힌다. 최신 값은 ref 로 건넨다.
@@ -45,6 +80,7 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
   const activeQueryRef = useRef(activeQuery)
   const hoveredIdRef = useRef<string | null>(null)
   const applyHighlightRef = useRef<(() => void) | null>(null)
+  const resetZoomRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     routerRef.current = router
@@ -52,6 +88,8 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
     hoveredIdRef.current = hoveredId
     applyHighlightRef.current?.()
   }, [router, activeQuery, hoveredId])
+
+  const resetZoom = useCallback(() => resetZoomRef.current?.(), [])
 
   useEffect(() => {
     const container = containerRef.current
@@ -88,8 +126,7 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         0.01,
         50,
       )
-      // 모델은 키 = 1 단위로 구워져 있다. fov 28° 에서 2.45 면 세로를 8할쯤 채운다.
-      camera.position.set(0, 0, 2.45)
+      camera.position.set(0, 0, DEFAULT_DISTANCE)
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.55))
       const key = new THREE.DirectionalLight(0xffffff, 2.1)
@@ -103,18 +140,22 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
       const pivot = new THREE.Group()
       scene.add(pivot)
 
-      const materialByPart = new Map<string, import('three').MeshStandardMaterial>()
-      const partByObject = new Map<import('three').Object3D, string>()
+      const materialByGroup = new Map<string, import('three').MeshStandardMaterial>()
+      const groupByObject = new Map<import('three').Object3D, string>()
       const pickable: import('three').Object3D[] = []
 
       function applyHighlight() {
-        for (const [id, material] of materialByPart) {
-          const part = PART_BY_ID.get(id)
-          const selected = part != null && part.query === activeQueryRef.current
+        const match = matchQuery(activeQueryRef.current)
+        for (const [id, material] of materialByGroup) {
+          // 상위 부위로 검색했으면 그 밑 세부를 전부 켠다. '하체 운동' 이면 다리 전체다.
+          const selected =
+            match.kind === 'group'
+              ? match.group.id === id
+              : match.kind === 'part'
+                ? GROUP_BY_ID.get(id)?.parent === match.part.id
+                : false
           const hovered = id === hoveredIdRef.current
-          material.color.setHex(
-            selected ? COLOR.selected : hovered ? COLOR.hover : COLOR.muscle,
-          )
+          material.color.setHex(selected ? COLOR.selected : hovered ? COLOR.hover : COLOR.muscle)
           material.emissive.setHex(selected ? COLOR.selected : 0x000000)
           material.emissiveIntensity = selected ? 0.22 : 0
         }
@@ -150,7 +191,7 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
               metalness: 0.04,
             })
 
-        if (!isShell) materialByPart.set(node.name, material)
+        if (!isShell) materialByGroup.set(node.name, material)
 
         node.traverse((object) => {
           const mesh = object as import('three').Mesh
@@ -159,7 +200,7 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
           mesh.geometry.computeVertexNormals()
           mesh.material = material
           if (!isShell) {
-            partByObject.set(mesh, node.name)
+            groupByObject.set(mesh, node.name)
             pickable.push(mesh)
           }
         })
@@ -173,19 +214,47 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
       const pointer = new THREE.Vector2()
       let targetRotation = 0
       let currentRotation = 0
+      let targetDistance = DEFAULT_DISTANCE
+      let currentDistance = DEFAULT_DISTANCE
       let dragging = false
       let dragMoved = 0
       let lastX = 0
+      let pinchStartGap = 0
+      let pinchStartDistance = DEFAULT_DISTANCE
 
       const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const element = renderer.domElement
+
+      function setDistance(next: number) {
+        targetDistance = clampDistance(next)
+        setZoomed(Math.abs(targetDistance - DEFAULT_DISTANCE) > ZOOM_EPSILON)
+      }
+
+      resetZoomRef.current = () => setDistance(DEFAULT_DISTANCE)
 
       function pick(event: PointerEvent) {
-        const rect = renderer.domElement.getBoundingClientRect()
+        const rect = element.getBoundingClientRect()
         pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
         pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
         raycaster.setFromCamera(pointer, camera)
-        const hit = raycaster.intersectObjects(pickable, false)[0]
-        return hit ? (partByObject.get(hit.object) ?? null) : null
+
+        // 정렬된 교차 결과 중 앞쪽 얇은 층에 함께 걸린 것들을 후보로 모은다.
+        const hits = raycaster.intersectObjects(pickable, false)
+        if (hits.length === 0) return null
+        const cutoff = hits[0].distance + PICK_DEPTH_WINDOW
+        const candidates: string[] = []
+        for (const hit of hits) {
+          if (hit.distance > cutoff) break
+          const id = groupByObject.get(hit.object)
+          if (id && !candidates.includes(id)) candidates.push(id)
+        }
+
+        for (const rule of PICK_PRIORITY) {
+          if (candidates.includes(rule.prefer) && candidates.some((id) => rule.over.includes(id))) {
+            return rule.prefer
+          }
+        }
+        return candidates[0] ?? null
       }
 
       function onPointerMove(event: PointerEvent) {
@@ -198,29 +267,29 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         }
         const id = pick(event)
         setHoveredId(id)
-        renderer.domElement.style.cursor = id ? 'pointer' : 'grab'
+        element.style.cursor = id ? 'pointer' : 'grab'
       }
 
       function onPointerDown(event: PointerEvent) {
         dragging = true
         dragMoved = 0
         lastX = event.clientX
-        renderer.domElement.setPointerCapture(event.pointerId)
-        renderer.domElement.style.cursor = 'grabbing'
+        element.setPointerCapture(event.pointerId)
+        element.style.cursor = 'grabbing'
       }
 
       function onPointerUp(event: PointerEvent) {
         dragging = false
-        if (renderer.domElement.hasPointerCapture(event.pointerId)) {
-          renderer.domElement.releasePointerCapture(event.pointerId)
+        if (element.hasPointerCapture(event.pointerId)) {
+          element.releasePointerCapture(event.pointerId)
         }
         // 돌리려고 끈 것과 고르려고 누른 것을 구분한다.
         if (dragMoved < 6) {
           const id = pick(event)
-          const part = id ? PART_BY_ID.get(id) : null
-          if (part) routerRef.current.push(`/?q=${encodeURIComponent(part.query)}`)
+          const group = id ? GROUP_BY_ID.get(id) : null
+          if (group) routerRef.current.push(`/?q=${encodeURIComponent(group.query)}`)
         }
-        renderer.domElement.style.cursor = 'grab'
+        element.style.cursor = 'grab'
       }
 
       function onPointerLeave() {
@@ -228,13 +297,58 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         setHoveredId(null)
       }
 
-      const element = renderer.domElement
+      /**
+       * 휠 확대. passive: false 로 붙여서 preventDefault 가 먹게 한다.
+       * 안 막으면 확대하려다 페이지가 스크롤된다.
+       */
+      function onWheel(event: WheelEvent) {
+        event.preventDefault()
+        // deltaMode 0=픽셀, 1=줄, 2=페이지. 줄 단위는 대략 16px 로 환산한다.
+        const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1
+        setDistance(targetDistance + event.deltaY * scale * 0.0016)
+      }
+
+      function gapBetween(touches: TouchList) {
+        const dx = touches[0].clientX - touches[1].clientX
+        const dy = touches[0].clientY - touches[1].clientY
+        return Math.hypot(dx, dy)
+      }
+
+      function onTouchStart(event: TouchEvent) {
+        if (event.touches.length !== 2) return
+        // 두 손가락 동안에는 브라우저에 스크롤을 맡기지 않는다. 끝나면 되돌린다.
+        element.style.touchAction = 'none'
+        dragging = false
+        pinchStartGap = gapBetween(event.touches)
+        pinchStartDistance = targetDistance
+      }
+
+      function onTouchMove(event: TouchEvent) {
+        if (event.touches.length !== 2 || pinchStartGap === 0) return
+        event.preventDefault()
+        const ratio = gapBetween(event.touches) / pinchStartGap
+        // 손가락을 벌리면(ratio > 1) 가까이 간다 = 거리가 줄어든다.
+        setDistance(pinchStartDistance / ratio)
+      }
+
+      function onTouchEnd(event: TouchEvent) {
+        if (event.touches.length >= 2) return
+        pinchStartGap = 0
+        // 한 손가락 세로 드래그는 페이지 스크롤, 가로 드래그는 회전으로 되돌린다.
+        element.style.touchAction = 'pan-y'
+      }
+
       element.style.cursor = 'grab'
-      element.style.touchAction = 'pan-y' // 세로 스크롤은 페이지에 양보한다
+      element.style.touchAction = 'pan-y'
       element.addEventListener('pointermove', onPointerMove)
       element.addEventListener('pointerdown', onPointerDown)
       element.addEventListener('pointerup', onPointerUp)
       element.addEventListener('pointerleave', onPointerLeave)
+      element.addEventListener('wheel', onWheel, { passive: false })
+      element.addEventListener('touchstart', onTouchStart, { passive: false })
+      element.addEventListener('touchmove', onTouchMove, { passive: false })
+      element.addEventListener('touchend', onTouchEnd)
+      element.addEventListener('touchcancel', onTouchEnd)
 
       const resizeObserver = new ResizeObserver(() => {
         if (!container.clientWidth || !container.clientHeight) return
@@ -250,7 +364,9 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         // 가만히 두면 아주 천천히 돈다. 3D 라는 걸 알려주는 최소한의 신호다.
         if (!dragging && !reduceMotion) targetRotation += 0.0016
         currentRotation += (targetRotation - currentRotation) * 0.12
+        currentDistance += (targetDistance - currentDistance) * 0.15
         pivot.rotation.y = currentRotation
+        camera.position.z = currentDistance
         renderer.render(scene, camera)
       }
       tick()
@@ -262,19 +378,25 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         element.removeEventListener('pointerdown', onPointerDown)
         element.removeEventListener('pointerup', onPointerUp)
         element.removeEventListener('pointerleave', onPointerLeave)
+        element.removeEventListener('wheel', onWheel)
+        element.removeEventListener('touchstart', onTouchStart)
+        element.removeEventListener('touchmove', onTouchMove)
+        element.removeEventListener('touchend', onTouchEnd)
+        element.removeEventListener('touchcancel', onTouchEnd)
         scene.traverse((object) => {
           const mesh = object as import('three').Mesh
           if (mesh.isMesh) mesh.geometry.dispose()
         })
-        for (const material of materialByPart.values()) material.dispose()
+        for (const material of materialByGroup.values()) material.dispose()
         renderer.dispose()
         element.remove()
         applyHighlightRef.current = null
+        resetZoomRef.current = null
       }
     }
 
     /*
-      three 와 모델을 합치면 700KB 가까이 된다. 데스크톱에서는 왼쪽 레일이 처음부터
+      three 와 모델을 합치면 900KB 가까이 된다. 데스크톱에서는 왼쪽 레일이 처음부터
       보이므로 바로 받지만, 모바일에서는 접힌 화면 아래에 있다. 화면에 들어올 때까지
       기다렸다가 받는다.
     */
@@ -298,7 +420,7 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
 
   if (status === 'failed') return null
 
-  const hoveredLabel = hoveredId ? PART_BY_ID.get(hoveredId)?.label : null
+  const hoveredLabel = hoveredId ? GROUP_BY_ID.get(hoveredId)?.label : null
 
   return (
     <figure className="relative m-0">
@@ -315,11 +437,23 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         </div>
       ) : null}
 
+      {/* 확대하고 길을 잃으면 돌아올 길이 없다. 확대했을 때만 띄운다. */}
+      {zoomed ? (
+        <button
+          type="button"
+          onClick={resetZoom}
+          className="absolute top-2 right-2 flex h-8 items-center gap-1.5 rounded-full border border-border bg-surface/90 px-3 text-[11px] font-medium text-muted backdrop-blur-sm hover:border-accent-dim hover:text-text"
+        >
+          <MagnifyingGlass size={12} weight={ICON_WEIGHT} aria-hidden />
+          크기 초기화
+        </button>
+      ) : null}
+
       <figcaption className="mt-1 flex min-h-6 items-center justify-center gap-2 text-xs">
         {hoveredLabel ? (
           <span className="font-semibold text-accent">{hoveredLabel}</span>
         ) : (
-          <span className="text-dim">드래그해서 돌리고, 부위를 눌러 보세요</span>
+          <span className="text-dim">드래그해서 돌리고, 휠로 확대하고, 부위를 눌러 보세요</span>
         )}
       </figcaption>
     </figure>

@@ -253,11 +253,11 @@
  * 카드가 한꺼번에 튀어나오면 싸구려로 보인다. 아주 짧게 어긋나며 올라오게 한다.
  * 지연은 호출부에서 animation-delay 로 준다.
  */
-@utility card-enter {
-  animation: card-enter 420ms var(--ease-out-quint) both;
+@utility enter-y {
+  animation: enter-y 420ms var(--ease-out-quint) both;
 }
 
-@keyframes card-enter {
+@keyframes enter-y {
   from {
     opacity: 0;
     transform: translateY(10px);

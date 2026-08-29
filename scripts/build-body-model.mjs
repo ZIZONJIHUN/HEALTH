@@ -24,37 +24,72 @@ const STL_BASE =
   'https://raw.githubusercontent.com/Kevin-Mattheus-Moerman/BodyParts3D/main/assets/BodyParts3D_data/stl'
 const CACHE_DIR = path.join('.cache', 'bodyparts3d')
 const OUT_PATH = path.join('public', 'models', 'body.glb')
+const NODES_OUT_PATH = path.join('src', 'data', 'bodyModelNodes.json')
 const DOWNLOAD_CONCURRENCY = 6
 
 /**
- * 노드 이름이 곧 앱의 부위 id 다 (src/data/categories.ts 의 BODY_PARTS.id).
- * '전신'은 부위가 아니라 "전체 선택" 상태라 여기에 없다.
+ * 노드 이름이 곧 앱의 세부 부위 id 다 (src/data/categories.ts 의 MUSCLE_GROUPS.id).
+ * 여기와 저기가 어긋나면 화면에 있는 부위가 모델에서 회색으로 비거나, 모델에 있는데
+ * 클릭이 안 된다. 빌드가 끝나면 노드 이름을 NODES_OUT_PATH 로 내보내고
+ * tests/unit/bodyModel.test.ts 가 대조한다.
+ *
+ * '전신'은 부위가 아니라 훈련 방식이라 대응하는 근육이 없다. 여기에 없다.
  */
 const GROUPS = [
+  { id: 'chest-upper', parts: ['FMA34690', 'FMA34691'] }, // 대흉근 쇄골지
   {
-    id: 'chest',
-    parts: ['FMA34690', 'FMA34691', 'FMA79979', 'FMA79980', 'FMA45874', 'FMA45875'],
+    id: 'chest-lower',
+    parts: [
+      'FMA79979', 'FMA79980', // 대흉근 흉늑지
+      'FMA45874', 'FMA45875', // 대흉근 복부지
+    ],
+  },
+
+  { id: 'back-lats', parts: ['FMA13358', 'FMA13359'] }, // 광배근
+  {
+    id: 'back-traps',
+    parts: ['FMA33581', 'FMA33583', 'FMA33584', 'FMA33585', 'FMA33586', 'FMA33587'],
   },
   {
-    id: 'back',
+    id: 'back-erectors',
     parts: [
-      'FMA13358', 'FMA13359', // 광배근
-      'FMA33581', 'FMA33583', 'FMA33584', 'FMA33585', 'FMA33586', 'FMA33587', // 승모근
+      'FMA22740', 'FMA22741', // 요장늑근
+      'FMA22742', 'FMA22743', // 흉장늑근
+      'FMA22751', 'FMA22753', // 흉최장근
+      'FMA22779', 'FMA22780', // 흉극근
+    ],
+  },
+
+  { id: 'shoulder-front', parts: ['FMA34680', 'FMA34681'] }, // 삼각근 쇄골부
+  { id: 'shoulder-side', parts: ['FMA34682', 'FMA34683'] }, // 삼각근 견봉부
+  {
+    id: 'shoulder-rear',
+    parts: [
+      'FMA34684', 'FMA34685', // 삼각근 극부
+      // 극하근·대원근은 등이 아니라 여기다. 후면 삼각근 바로 아래에 붙어 있어서
+      // 등으로 묶으면 어깨를 눌렀는데 등이 켜지는 것처럼 보인다.
       'FMA32547', 'FMA32548', // 극하근
       'FMA32551', 'FMA32552', // 대원근
     ],
   },
+
   {
-    id: 'shoulder',
-    parts: ['FMA34680', 'FMA34681', 'FMA34682', 'FMA34683', 'FMA34684', 'FMA34685'],
+    id: 'arms-biceps',
+    parts: [
+      'FMA37684', 'FMA37685', 'FMA37686', 'FMA37687', // 상완이두 장·단두
+      'FMA37668', 'FMA37669', // 상완근
+    ],
   },
   {
-    id: 'arms',
+    id: 'arms-triceps',
     parts: [
-      'FMA37684', 'FMA37685', 'FMA37686', 'FMA37687', // 이두
-      'FMA37695', 'FMA37696', 'FMA37697', 'FMA37698', 'FMA37699', 'FMA37700', // 삼두
+      'FMA37695', 'FMA37696', 'FMA37697', 'FMA37698', 'FMA37699', 'FMA37700', // 상완삼두 3두
       'FMA37705', 'FMA37706', // 주근
-      // 전완근. 없으면 팔뚝이 피부만 남아 회색으로 비고 클릭도 안 된다.
+    ],
+  },
+  {
+    id: 'arms-forearm',
+    parts: [
       'FMA38486', 'FMA38487', // 상완요골근
       'FMA38560', 'FMA38561', // 원회내근
       'FMA38460', 'FMA38461', // 요측수근굴근
@@ -66,36 +101,60 @@ const GROUPS = [
       // 실이 늘어진 것처럼 보인다. 팔뚝 표면은 위 근육들로 이미 덮인다.
     ],
   },
+
+  { id: 'core-abs', parts: ['FMA13377', 'FMA13378'] }, // 복직근
   {
-    id: 'core',
+    id: 'core-obliques',
     parts: [
-      'FMA13377', 'FMA13378', // 복직근
       'FMA13336', 'FMA13337', // 외복사근
       'FMA13398', 'FMA13399', // 전거근
     ],
   },
+
   {
-    id: 'legs',
+    id: 'legs-quads',
     parts: [
-      'FMA38928', 'FMA38929', 'FMA38930', 'FMA38931', // 대퇴사두
-      'FMA38932', 'FMA38933', 'FMA38934', 'FMA38935',
-      'FMA45888', 'FMA45889', 'FMA45891', 'FMA45892', // 대퇴이두
-      'FMA22358', 'FMA22359', 'FMA22448', 'FMA22449', // 반건양근·반막양근
-      'FMA45957', 'FMA45958', 'FMA45960', 'FMA45961', // 비복근
-      'FMA22328', 'FMA22329', 'FMA22330', 'FMA22331', // 대둔근·중둔근
-      // 허벅지 안쪽. 없으면 다리 사이가 피부만 남아 비어 보인다.
+      'FMA38928', 'FMA38929', // 대퇴직근
+      'FMA38930', 'FMA38931', // 외측광근
+      'FMA38932', 'FMA38933', // 내측광근
+      'FMA38934', 'FMA38935', // 중간광근
+      'FMA22354', 'FMA22355', // 봉공근
+      'FMA22425', 'FMA22426', // 대퇴근막장근
+    ],
+  },
+  {
+    id: 'legs-hamstrings',
+    parts: [
+      'FMA45888', 'FMA45889', 'FMA45891', 'FMA45892', // 대퇴이두 장·단두
+      'FMA22358', 'FMA22359', // 반건양근
+      'FMA22448', 'FMA22449', // 반막양근
+    ],
+  },
+  {
+    id: 'legs-glutes',
+    parts: [
+      'FMA22328', 'FMA22329', // 대둔근
+      'FMA22330', 'FMA22331', // 중둔근
+    ],
+  },
+  {
+    id: 'legs-calves',
+    parts: [
+      'FMA45957', 'FMA45958', 'FMA45960', 'FMA45961', // 비복근 내·외측두
+      'FMA22558', 'FMA22559', // 가자미근
+      'FMA22544', 'FMA22545', // 전경골근
+      'FMA22552', 'FMA22553', // 장비골근
+      // 장지신근(FMA22548/22549)은 뺐다 — 발가락까지 힘줄이 뻗어 실처럼 보인다.
+    ],
+  },
+  {
+    id: 'legs-adductors',
+    parts: [
       'FMA22459', 'FMA22460', // 대내전근
       'FMA22456', 'FMA22457', // 장내전근
       'FMA22452', 'FMA22454', // 단내전근
       'FMA43883', 'FMA43884', // 박근
       'FMA22450', 'FMA22451', // 치골근
-      'FMA22354', 'FMA22355', // 봉공근
-      'FMA22425', 'FMA22426', // 대퇴근막장근
-      // 정강이·종아리 바깥
-      'FMA22544', 'FMA22545', // 전경골근
-      'FMA22558', 'FMA22559', // 가자미근
-      'FMA22552', 'FMA22553', // 장비골근
-      // 장지신근(FMA22548/22549)도 같은 이유로 뺐다 — 발가락까지 힘줄이 뻗는다.
     ],
   },
 ]
@@ -104,24 +163,36 @@ const GROUPS = [
 const SHELL = { id: 'shell', parts: ['FMA7163'] }
 
 /**
- * 부위별 삼각형 예산. 원본은 합계 수백만 삼각형이라 비율만으로는 통제가 안 된다.
+ * 세부 부위별 삼각형 예산. 원본은 합계 수백만 삼각형이라 비율만으로는 통제가 안 된다.
  * 예산을 정해두고 부위 안에서 원본 밀도에 비례해 나눠 준다.
  *
- * 팔과 다리가 큰 이유는 근육 개수 때문이다. 전완근 10종, 내전근·정강이 14종이
- * 좌우로 들어가 예산을 잘게 나눠 갖는다. 근육 하나가 200 삼각형 밑으로 떨어지면
- * 형태가 무너지므로 개수에 맞춰 예산도 키운다.
+ * 근육 개수가 많은 곳(전완, 내전근)이 큰 이유는 예산을 잘게 나눠 갖기 때문이다.
+ * 근육 하나가 200 삼각형 밑으로 떨어지면 형태가 무너진다.
  *
- * 합계 약 6.6만 삼각형 — 저가형 모바일에서도 60fps 가 나오는 수준.
+ * 합계 약 7만 삼각형 — 저가형 모바일에서도 60fps 가 나오는 수준.
  */
 const TRIANGLE_BUDGET = {
-  chest: 5000,
-  back: 9000,
-  shoulder: 5000,
-  arms: 12000,
-  core: 8000,
-  legs: 18000,
+  'chest-upper': 1200,
+  'chest-lower': 3800,
+  'back-lats': 3500,
+  'back-traps': 3500,
+  'back-erectors': 3000,
+  'shoulder-front': 1500,
+  'shoulder-side': 1500,
+  'shoulder-rear': 3000,
+  'arms-biceps': 2500,
+  'arms-triceps': 3500,
+  'arms-forearm': 7000,
+  'core-abs': 3000,
+  'core-obliques': 5000,
+  'legs-quads': 5000,
+  'legs-hamstrings': 4000,
+  'legs-glutes': 2500,
+  'legs-calves': 3500,
+  'legs-adductors': 4000,
   shell: 9000,
 }
+
 
 async function fetchStl(id) {
   const file = path.join(CACHE_DIR, `${id}.stl`)
@@ -323,16 +394,39 @@ async function main() {
   writeFileSync(OUT_PATH, glb)
 
   console.log('---')
+  let totalTriangles = 0
   for (const node of document.getRoot().listNodes()) {
     let triangles = 0
     for (const primitive of node.getMesh().listPrimitives()) {
       const indices = primitive.getIndices()
       triangles += (indices ? indices.getCount() : primitive.getAttribute('POSITION').getCount()) / 3
     }
-    console.log(`${node.getName().padEnd(9)} ${Math.round(triangles).toLocaleString().padStart(8)} tris`)
+    totalTriangles += triangles
+    console.log(`${node.getName().padEnd(16)} ${Math.round(triangles).toLocaleString().padStart(8)} tris`)
   }
+
+  /*
+    실제로 구운 노드 이름을 코드가 읽을 수 있는 곳에 남긴다.
+    빌드 스크립트와 화면(categories.ts)이 각자 목록을 들고 있으면 어긋나도 아무도
+    모른다 — 예전에 팔뚝·허벅지 안쪽에 근육이 없어 회색으로 비고 클릭도 안 되던
+    결함이 그래서 늦게 발견됐다. tests/unit/bodyModel.test.ts 가 이 파일과 대조한다.
+  */
+  writeFileSync(
+    NODES_OUT_PATH,
+    `${JSON.stringify(
+      {
+        note: 'scripts/build-body-model.mjs 가 생성한다. 직접 고치지 않는다.',
+        shell: SHELL.id,
+        groups: GROUPS.map((group) => group.id),
+      },
+      null,
+      2,
+    )}\n`,
+  )
+
   console.log('---')
-  console.log(`${OUT_PATH}: ${(glb.length / 1024).toFixed(0)}KB`)
+  console.log(`${OUT_PATH}: ${(glb.length / 1024).toFixed(0)}KB, ${Math.round(totalTriangles).toLocaleString()} tris`)
+  console.log(`${NODES_OUT_PATH}: 노드 ${GROUPS.length}개`)
 }
 
 await main()

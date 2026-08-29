@@ -41,7 +41,7 @@ export default function VideoGrid({
         return (
           <li
             key={video.id}
-            className="card-enter relative"
+            className="enter-y relative"
             style={{ animationDelay: `${Math.min(index, STAGGER_MAX_INDEX) * STAGGER_STEP_MS}ms` }}
           >
             <Link

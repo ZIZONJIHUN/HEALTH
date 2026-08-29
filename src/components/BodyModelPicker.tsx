@@ -21,8 +21,12 @@ const SHELL_NODE = 'shell'
 /** 부위 id → 검색어. '전신'은 모델에 대응하는 근육이 없어 빠진다. */
 const PART_BY_ID = new Map(BODY_PARTS.map((part) => [part.id as string, part]))
 
+/**
+ * 근육 기본색은 해부 표본의 근조직 톤이다. 차가운 회색으로 두면 시체처럼 보인다.
+ * 채도를 26%까지 낮춰서 라임 액센트를 덮지 않게 했다.
+ */
 const COLOR = {
-  muscle: 0x59647a,
+  muscle: 0x96585e,
   hover: 0x9ec24a,
   selected: 0xc2e85b,
   shell: 0x1b2330,

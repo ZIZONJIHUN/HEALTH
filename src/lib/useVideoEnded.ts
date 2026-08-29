@@ -39,9 +39,12 @@ export function useVideoEnded(
     let acknowledged = false
 
     function requestUpdates() {
+      // targetOrigin 을 '*' 로 둔다. 임베드는 youtube.com 과 youtube-nocookie.com 중
+      // 어디로도 갈 수 있고, 여기서 나가는 내용은 비밀이 아니다.
+      // 받을 때 origin 을 확인하는 쪽이 실제 보호막이다.
       iframe?.contentWindow?.postMessage(
         JSON.stringify({ event: 'listening', id: playerId, channel: 'widget' }),
-        YOUTUBE_ORIGIN,
+        '*',
       )
     }
 

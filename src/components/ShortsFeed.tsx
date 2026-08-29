@@ -55,6 +55,9 @@ export default function ShortsFeed({
     return () => observer.disconnect()
   }, [videos.length])
 
+  // FeedSlide 로 내려가는 참조가 렌더마다 바뀌면 종료 감지 구독이 계속 끊겼다 붙는다.
+  const handleEnded = useCallback((index: number) => setEndedIndex(index), [])
+
   const goTo = useCallback(
     (index: number) => {
       const clamped = Math.min(Math.max(index, 0), videos.length - 1)
@@ -121,13 +124,10 @@ export default function ShortsFeed({
           >
             <FeedSlide
               video={video}
+              index={index}
               active={Math.abs(index - activeIndex) <= MOUNT_WINDOW}
               autoplay={index === activeIndex}
-              onEnded={
-                routineMode && index === activeIndex
-                  ? () => setEndedIndex(index)
-                  : undefined
-              }
+              onEnded={handleEnded}
             />
           </div>
         ))}
@@ -167,9 +167,10 @@ export default function ShortsFeed({
         </div>
       </div>
 
-      {routineMode && endedIndex === activeIndex ? (
+      {endedIndex === activeIndex ? (
         <NextUpPanel
           nextUp={nextUp}
+          finishedLabel={routineMode ? '루틴을 끝냈어요' : '마지막 영상이었어요'}
           startIndex={activeIndex + 1}
           onPick={goTo}
           onDismiss={() => setEndedIndex(null)}
@@ -180,19 +181,21 @@ export default function ShortsFeed({
 }
 
 /**
- * 영상이 끝나면 뜨는 "다음으로 해보세요".
+ * 영상이 끝나면 뜨는 "다음으로 해보세요". 검색 피드와 루틴 재생 모두에서 뜬다.
  *
  * 자동 감지(useVideoEnded)가 실패하는 환경이 있을 수 있어, 이 화면이 안 떠도
- * 사용자는 스와이프나 화살표 버튼으로 다음 운동에 갈 수 있다. 여기는 지름길이다.
+ * 사용자는 스와이프나 화살표 버튼으로 다음 영상에 갈 수 있다. 여기는 지름길이다.
  */
 function NextUpPanel({
   nextUp,
   startIndex,
+  finishedLabel,
   onPick,
   onDismiss,
 }: {
   nextUp: ShortVideo[]
   startIndex: number
+  finishedLabel: string
   onPick: (index: number) => void
   onDismiss: () => void
 }) {
@@ -204,7 +207,7 @@ function NextUpPanel({
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-semibold text-text">
-          {nextUp.length ? '다음으로 해보세요' : '루틴을 끝냈어요'}
+          {nextUp.length ? '다음으로 해보세요' : finishedLabel}
         </p>
         <button
           type="button"

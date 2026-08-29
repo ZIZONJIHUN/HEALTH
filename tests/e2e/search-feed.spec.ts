@@ -20,6 +20,10 @@ test('카드를 누르면 전면 피드에서 재생된다', async ({ page }) =>
   // 슬라이드는 9개지만 마운트 윈도우가 ±1이므로 iframe은 3개만 존재한다.
   await expect(page.locator('iframe')).toHaveCount(3)
   await expect(page.locator('iframe').first()).toHaveAttribute('src', /playsinline=1/)
+  // 이 두 파라미터가 '다음으로 해보세요'의 전제다. loop=1 이면 영상이 끝나지 않아
+  // 종료를 감지할 시점이 없고, enablejsapi=0 이면 종료 신호 자체가 오지 않는다.
+  await expect(page.locator('iframe').first()).toHaveAttribute('src', /loop=0/)
+  await expect(page.locator('iframe').first()).toHaveAttribute('src', /enablejsapi=1/)
 })
 
 test('뒤로가기로 그리드의 스크롤 위치가 복원된다', async ({ page }) => {

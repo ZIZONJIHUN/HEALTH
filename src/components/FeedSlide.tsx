@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
 import { buildEmbedUrl } from '@/lib/embed'
@@ -15,24 +15,31 @@ import type { ShortVideo } from '@/lib/types'
  * active로 마운트되어 플레이어 셸을 미리 준비하지만, 화면에 보이지 않는
  * 동안 스트리밍하면 모바일 데이터와 디코딩 비용만 세 배로 든다.
  *
- * onEnded 가 있으면 루틴 재생이다. 이때만 반복을 끄고 끝을 감지한다 —
- * loop=1 이면 영상이 영원히 끝나지 않아 "다음 운동"을 띄울 시점이 없다.
+ * 반복(loop)은 끈다. loop=1 이면 영상이 영원히 끝나지 않아 "다음으로 해보세요"를
+ * 띄울 시점이 아예 없다. 검색이든 루틴이든 마찬가지라 모드로 나누지 않는다.
+ *
+ * loop 와 enablejsapi 를 슬라이드마다 다르게 주면 안 된다. 그러면 슬라이드가
+ * 활성화될 때 src 가 바뀌어 iframe 이 통째로 다시 뜬다.
  */
 export default function FeedSlide({
   video,
+  index,
   active,
   autoplay,
   onEnded,
 }: {
   video: ShortVideo
+  index: number
   active: boolean
   autoplay: boolean
-  onEnded?: () => void
+  onEnded: (index: number) => void
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const routineMode = onEnded != null
 
-  useVideoEnded(iframeRef, active && autoplay, onEnded)
+  // 인라인 화살표를 그대로 넘기면 렌더마다 새 함수가 되어 감지 구독이 계속 끊겼다 붙는다.
+  const handleEnded = useCallback(() => onEnded(index), [onEnded, index])
+
+  useVideoEnded(iframeRef, active && autoplay, handleEnded)
 
   return (
     <div className="relative flex h-full w-full items-center justify-center bg-black">
@@ -53,11 +60,7 @@ export default function FeedSlide({
         {active ? (
           <iframe
             ref={iframeRef}
-            src={buildEmbedUrl(video.id, {
-              autoplay,
-              loop: !routineMode,
-              enableJsApi: routineMode,
-            })}
+            src={buildEmbedUrl(video.id, { autoplay, loop: false, enableJsApi: true })}
             title={video.title}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen

@@ -28,11 +28,10 @@ export function buildEmbedUrl(
     modestbranding: '1',
   })
 
-  if (enableJsApi) {
-    params.set('enablejsapi', '1')
-    // origin 이 없으면 브라우저가 postMessage 를 막아 상태 이벤트가 오지 않는다.
-    if (typeof window !== 'undefined') params.set('origin', window.location.origin)
-  }
+  // origin 파라미터는 일부러 넣지 않는다. 서버 렌더에는 window 가 없어서 URL 이
+  // 클라이언트와 달라지고, iframe src 하이드레이션 불일치가 난다.
+  // 대신 메시지를 받을 때 event.origin 을 확인한다 (useVideoEnded).
+  if (enableJsApi) params.set('enablejsapi', '1')
 
   return `https://www.youtube.com/embed/${videoId}?${params.toString()}`
 }

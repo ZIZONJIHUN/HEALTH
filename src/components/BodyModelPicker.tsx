@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ICON_WEIGHT, MagnifyingGlass } from '@/components/icons'
 import { MUSCLE_GROUPS, matchQuery, type MuscleGroup } from '@/data/categories'
@@ -112,8 +113,13 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
       const key = new THREE.DirectionalLight(0xffffff, 2.1)
       key.position.set(1.5, 2, 3)
       scene.add(key)
-      // 라임 림라이트가 실루엣을 잡아준다. 액센트는 이 하나로 고정한다.
-      const rim = new THREE.DirectionalLight(0xc2e85b, 1.7)
+      /*
+        림라이트는 어두운 배경에서 실루엣을 떼어내는 역할만 한다.
+        여기에 액센트(라임)를 쓰면 안 된다 — 빛을 받는 면이 선택된 부위와 똑같은 색이
+        되어서, 아무것도 안 골랐는데 어깨 바깥과 옆구리가 켜져 보인다.
+        라임은 오직 hover/선택 상태에만 쓴다.
+      */
+      const rim = new THREE.DirectionalLight(0x9fb6d4, 1.5)
       rim.position.set(-2.5, 0.8, -2)
       scene.add(rim)
 
@@ -385,6 +391,13 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
 
   if (status === 'failed') return null
 
+  const selection = matchQuery(activeQuery)
+  const selectedLabel =
+    selection.kind === 'group'
+      ? selection.group.label
+      : selection.kind === 'part'
+        ? selection.part.label
+        : null
   const hoveredLabel = hoveredId ? GROUP_BY_ID.get(hoveredId)?.label : null
 
   return (
@@ -414,9 +427,25 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         </button>
       ) : null}
 
-      <figcaption className="mt-1 flex min-h-6 items-center justify-center gap-2 text-xs">
+      {/*
+        라임으로 켜진 부위가 왜 켜져 있는지 여기서만 알 수 있다.
+        이 줄이 없으면 "마우스를 대지도 않았는데 형광색"으로 보이고, 끌 방법도 없다.
+      */}
+      <figcaption className="mt-1 flex min-h-6 flex-wrap items-center justify-center gap-x-2 text-xs">
         {hoveredLabel ? (
           <span className="font-semibold text-accent">{hoveredLabel}</span>
+        ) : selectedLabel ? (
+          <>
+            <span className="text-muted">
+              <span className="font-semibold text-accent">{selectedLabel}</span> 보는 중
+            </span>
+            <Link
+              href="/"
+              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-dim hover:border-border-strong hover:text-text"
+            >
+              전체 보기
+            </Link>
+          </>
         ) : (
           <span className="text-dim">드래그해서 돌리고, 휠로 확대하고, 부위를 눌러 보세요</span>
         )}

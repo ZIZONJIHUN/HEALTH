@@ -35,26 +35,6 @@ const COLOR = {
   shell: 0x1b2330,
 }
 
-/**
- * 광선이 뚫고 지나간 근육 중 이 깊이 안에 있는 것들을 후보로 본다.
- * 모델은 키 = 1 이므로 0.03 ≈ 5cm. 몸 반대편까지 넘어가지 않는 폭이다.
- */
-const PICK_DEPTH_WINDOW = 0.03
-
-/**
- * 얇은 막이 표면을 덮는 자리에서, 사람이 실제로 고르려는 근육을 우선한다.
- *
- * 외복사근의 널힘줄이 복직근 앞을 9mm 덮고 있어서, 그냥 두면 배 한가운데를 눌러도
- * 항상 '옆구리'가 잡힌다. 배를 누르면 복근이 나와야 한다.
- *
- * 기립근은 일부러 넣지 않았다. 광배근이 기립근보다 17mm 뒤에 있어 등 넓은 면을 덮는데,
- * 기립근을 우선하면 광배근을 고를 수가 없어진다. 광배근이 닿지 않는 척추 양옆 좁은
- * 띠에서는 지금도 기립근이 그냥 잡히고, 그 밖에서는 칩으로 고르면 된다.
- */
-const PICK_PRIORITY: ReadonlyArray<{ prefer: string; over: readonly string[] }> = [
-  { prefer: 'core-abs', over: ['core-obliques'] },
-]
-
 /** 모델은 키 = 1 단위로 구워져 있다. fov 28° 에서 2.45 면 세로를 8할쯤 채운다. */
 const DEFAULT_DISTANCE = 2.45
 const MIN_DISTANCE = 1.3
@@ -238,23 +218,8 @@ export default function BodyModelPicker({ activeQuery = '' }: { activeQuery?: st
         pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
         raycaster.setFromCamera(pointer, camera)
 
-        // 정렬된 교차 결과 중 앞쪽 얇은 층에 함께 걸린 것들을 후보로 모은다.
-        const hits = raycaster.intersectObjects(pickable, false)
-        if (hits.length === 0) return null
-        const cutoff = hits[0].distance + PICK_DEPTH_WINDOW
-        const candidates: string[] = []
-        for (const hit of hits) {
-          if (hit.distance > cutoff) break
-          const id = groupByObject.get(hit.object)
-          if (id && !candidates.includes(id)) candidates.push(id)
-        }
-
-        for (const rule of PICK_PRIORITY) {
-          if (candidates.includes(rule.prefer) && candidates.some((id) => rule.over.includes(id))) {
-            return rule.prefer
-          }
-        }
-        return candidates[0] ?? null
+        const hit = raycaster.intersectObjects(pickable, false)[0]
+        return hit ? (groupByObject.get(hit.object) ?? null) : null
       }
 
       function onPointerMove(event: PointerEvent) {

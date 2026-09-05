@@ -28,6 +28,38 @@ const NODES_OUT_PATH = path.join('src', 'data', 'bodyModelNodes.json')
 const DOWNLOAD_CONCURRENCY = 6
 
 /**
+ * 배 앞면 안쪽(복직근이 있는 자리)을 버리고 옆구리 쪽만 남긴다.
+ * 좌표는 정규화가 끝난 뒤 값이다 (키 = 1, 원점 = 몸 중심, +z = 앞).
+ */
+const ABS_HALF_WIDTH = 0.042 // 복직근이 |x| 0.044 까지 간다. 살짝 겹치게 둔다.
+const FRONT_SURFACE_Z = 0.03 // 이보다 앞이면 배를 덮는 면이다.
+
+function keepLateralFront(x, y, z) {
+  return !(Math.abs(x) < ABS_HALF_WIDTH && z > FRONT_SURFACE_Z)
+}
+
+/** parts 항목은 보통 id 문자열이고, 잘라낼 게 있으면 { id, keep } 이다. */
+function normalizeParts(group) {
+  return group.parts.map((part) => (typeof part === 'string' ? { id: part, keep: null } : part))
+}
+
+/**
+ * 삼각형 무게중심으로 걸러낸다. 이 단계의 positions 는 아직 인덱스 없는
+ * 삼각형 나열(정점 9개 = 삼각형 1개)이라 잘라내기가 단순하다.
+ */
+function clipTriangles(positions, keep) {
+  const kept = []
+  for (let t = 0; t < positions.length; t += 9) {
+    const cx = (positions[t] + positions[t + 3] + positions[t + 6]) / 3
+    const cy = (positions[t + 1] + positions[t + 4] + positions[t + 7]) / 3
+    const cz = (positions[t + 2] + positions[t + 5] + positions[t + 8]) / 3
+    if (!keep(cx, cy, cz)) continue
+    for (let k = 0; k < 9; k++) kept.push(positions[t + k])
+  }
+  return new Float32Array(kept)
+}
+
+/**
  * 노드 이름이 곧 앱의 세부 부위 id 다 (src/data/categories.ts 의 MUSCLE_GROUPS.id).
  * 여기와 저기가 어긋나면 화면에 있는 부위가 모델에서 회색으로 비거나, 모델에 있는데
  * 클릭이 안 된다. 빌드가 끝나면 노드 이름을 NODES_OUT_PATH 로 내보내고
@@ -106,7 +138,13 @@ const GROUPS = [
   {
     id: 'core-obliques',
     parts: [
-      'FMA13336', 'FMA13337', // 외복사근
+      // 외복사근 메시에는 배 앞면을 통째로 덮는 널힘줄(건막)이 붙어 있다.
+      // 그대로 두면 (1) 복직근이 그 뒤에 가려 클릭이 안 되고 (2) '옆구리'를 고르면
+      // 몸통 전체가 켜져서 옆구리가 아니라 배 전체를 고른 것처럼 보인다.
+      // 측정값: 복직근은 |x| 0.044 까지, 외복사근은 정중선(0.0015)까지 뻗어 있다.
+      // 근육이 아니라 막이므로 앞면 안쪽만 잘라낸다.
+      { id: 'FMA13336', keep: keepLateralFront },
+      { id: 'FMA13337', keep: keepLateralFront },
       'FMA13398', 'FMA13399', // 전거근
     ],
   },
@@ -317,7 +355,8 @@ async function main() {
   mkdirSync(path.dirname(OUT_PATH), { recursive: true })
 
   const all = [...GROUPS, SHELL]
-  const ids = all.flatMap((group) => group.parts)
+  const partsByGroup = new Map(all.map((group) => [group.id, normalizeParts(group)]))
+  const ids = [...partsByGroup.values()].flat().map((part) => part.id)
   console.log(`STL ${ids.length}개 준비 중...`)
 
   let downloadedBytes = 0
@@ -358,8 +397,11 @@ async function main() {
     const isShell = group.id === SHELL.id
     const mesh = document.createMesh(group.id)
 
-    for (const id of group.parts) {
-      const positions = stlById.get(id)
+    for (const part of partsByGroup.get(group.id)) {
+      const id = part.id
+      const raw = stlById.get(id)
+      // 근육이 아닌 막을 잘라낸다(현재는 외복사근 널힘줄뿐).
+      const positions = part.keep ? clipTriangles(raw, part.keep) : raw
       const accessor = document
         .createAccessor(id)
         .setType('VEC3')

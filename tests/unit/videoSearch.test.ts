@@ -1,6 +1,8 @@
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { consumeApiBudget, DAILY_CALL_LIMIT, resetApiBudgetForTest } from '@/lib/apiBudget'
+import { MAX_QUERY_LENGTH } from '@/lib/cacheKey'
 import { CACHE_TTL_MS, clearMemoryCache, writeCache } from '@/lib/searchCache'
 import { getVideos } from '@/lib/videoSearch'
 
@@ -22,6 +24,7 @@ beforeEach(() => {
   // 비우지 않으면 앞 테스트가 채운 항목을 뒤 테스트가 캐시 히트로 받아
   // YouTube 호출이 일어나지 않고, 쿼터·오류·키 누락 테스트가 모두 무의미해진다.
   clearMemoryCache()
+  resetApiBudgetForTest()
 })
 
 function mockYouTube(items: Array<{ id: string; duration: string }>) {
@@ -61,6 +64,104 @@ describe('getVideos', () => {
     const result = await getVideos('   ')
 
     expect(result).toEqual({ query: '', videos: [], fromCache: false, quotaExceeded: false })
+  })
+
+  it('상한을 넘는 검색어는 API를 호출하지 않는다', async () => {
+    // MSW 핸들러를 등록하지 않는다. onUnhandledRequest: 'error' 라서 YouTube 로
+    // 요청이 나가면 이 테스트가 실패한다 — 이것이 쿼터 소각 방어의 핵심 단정이다.
+    const result = await getVideos('가'.repeat(MAX_QUERY_LENGTH + 1))
+
+    expect(result.videos).toEqual([])
+    expect(result.quotaExceeded).toBe(false)
+  })
+
+  it('상한을 넘는 검색어를 화면에 그대로 돌려주지 않는다', async () => {
+    // EmptyState 가 result.query 를 그린다. 자르지 않으면 쿼터는 막았는데
+    // 장문 문자열이 그대로 HTML 로 나간다.
+    const result = await getVideos('가'.repeat(5000))
+
+    expect(result.query.length).toBe(MAX_QUERY_LENGTH)
+  })
+
+  it('일일 호출 예산을 넘으면 쿼터 초과로 처리한다', async () => {
+    for (let i = 0; i < DAILY_CALL_LIMIT; i += 1) {
+      expect(await consumeApiBudget()).toBe(true)
+    }
+
+    // 여기서도 핸들러를 등록하지 않는다. 예산이 막지 못하면 요청이 나가 실패한다.
+    const result = await getVideos('스쿼트')
+
+    expect(result.quotaExceeded).toBe(true)
+    expect(result.videos).toEqual([])
+  })
+
+  it('예산이 소진돼도 캐시된 검색어는 계속 보인다', async () => {
+    const videos = [
+      {
+        id: 'saved',
+        title: '저장된 스쿼트',
+        channelTitle: '헬스톡',
+        thumbnailUrl: 'https://i.ytimg.com/vi/saved/hqdefault.jpg',
+        durationSeconds: 40,
+      },
+    ]
+    await writeCache('스쿼트', videos)
+    for (let i = 0; i < DAILY_CALL_LIMIT; i += 1) await consumeApiBudget()
+
+    const result = await getVideos('스쿼트')
+
+    // 캐시 적중은 예산을 소비하지 않으므로 배너도 뜨지 않는다.
+    expect(result.videos).toEqual(videos)
+    expect(result.fromCache).toBe(true)
+    expect(result.quotaExceeded).toBe(false)
+  })
+
+  it('같은 검색어 동시 요청은 YouTube를 한 번만 부른다', async () => {
+    let searchCalls = 0
+    server.use(
+      http.get(SEARCH, () => {
+        searchCalls += 1
+        return HttpResponse.json({ items: [{ id: { videoId: 'a' } }] })
+      }),
+      http.get(VIDEOS, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'a',
+              snippet: {
+                title: '제목 a',
+                channelTitle: '헬스톡',
+                thumbnails: { high: { url: 'https://i.ytimg.com/vi/a/hqdefault.jpg' } },
+              },
+              contentDetails: { duration: 'PT40S' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    const [first, second, third] = await Promise.all([
+      getVideos('스쿼트'),
+      getVideos('스쿼트'),
+      getVideos('스쿼트'),
+    ])
+
+    // 합류하지 않으면 3 × 101 units 다. 인기 검색어가 만료되는 순간이 정확히 이 상황이다.
+    expect(searchCalls).toBe(1)
+    expect(first).toBe(second)
+    expect(second).toBe(third)
+  })
+
+  it('요청이 끝나면 합류 맵을 비워 다음 검색이 새로 돈다', async () => {
+    mockYouTube([{ id: 'a', duration: 'PT30S' }])
+    await getVideos('스쿼트')
+    clearMemoryCache()
+
+    // 맵을 비우지 않으면 여기서 앞 요청의 결과가 그대로 돌아온다.
+    mockYouTube([{ id: 'b', duration: 'PT30S' }])
+    const result = await getVideos('스쿼트')
+
+    expect(result.videos.map((v) => v.id)).toEqual(['b'])
   })
 
   it('쿼터 초과면 quotaExceeded를 표시하고 던지지 않는다', async () => {

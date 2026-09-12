@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TABS } from '@/data/navigation'
-import { Barbell, ICON_WEIGHT } from '@/components/icons'
+import { TABS } from '@/components/nav/navigation'
+import { Barbell, ICON_WEIGHT } from '@/components/ui/icons'
 
 /**
  * 데스크톱 전용 헤더. 모바일에서는 화면 높이가 아까워 하단 탭바(BottomTabBar)만 쓴다.

@@ -1,7 +1,7 @@
 import Link from 'next/link'
-import MessageCard from '@/components/MessageCard'
-import { ICON_WEIGHT, SmileyMeh } from '@/components/icons'
-import { BUTTON_PRIMARY } from '@/components/styles'
+import MessageCard from '@/components/ui/MessageCard'
+import { ICON_WEIGHT, SmileyMeh } from '@/components/ui/icons'
+import { BUTTON_PRIMARY } from '@/components/ui/Button'
 
 /**
  * getVideos 가 videos: [] 를 돌려주는 경로(예: /feed 에서 quotaExceeded && 캐시 없음)와

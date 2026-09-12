@@ -2,9 +2,9 @@
 
 import { useCallback, useRef } from 'react'
 import Image from 'next/image'
-import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
-import { buildEmbedUrl } from '@/lib/embed'
-import { useVideoEnded } from '@/lib/useVideoEnded'
+import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
+import { buildEmbedUrl } from '@/features/feed/embed'
+import { useVideoEnded } from '@/features/feed/useVideoEnded'
 import type { ShortVideo } from '@/lib/types'
 
 /**

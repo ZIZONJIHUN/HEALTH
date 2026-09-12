@@ -1,5 +1,5 @@
-import BottomTabBar from '@/components/BottomTabBar'
-import TopNav from '@/components/TopNav'
+import BottomTabBar from '@/components/nav/BottomTabBar'
+import TopNav from '@/components/nav/TopNav'
 
 export default function TabsLayout({ children }: { children: React.ReactNode }) {
   return (

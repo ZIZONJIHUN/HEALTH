@@ -1,9 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import MessageCard from '@/components/MessageCard'
-import { ArrowClockwise, ICON_WEIGHT, WarningCircle } from '@/components/icons'
-import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/styles'
+import MessageCard from '@/components/ui/MessageCard'
+import { ArrowClockwise, ICON_WEIGHT, WarningCircle } from '@/components/ui/icons'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/ui/Button'
 
 /**
  * reset() 은 에러 상태만 지우고 서버 데이터를 재요청하지 않는다.

@@ -1,4 +1,4 @@
-import type { ShortVideo } from './types'
+import type { ShortVideo } from '@/lib/types'
 
 /**
  * 길이 필터는 이미 받아온 결과를 걸러낼 뿐이라 YouTube 쿼터를 쓰지 않는다.

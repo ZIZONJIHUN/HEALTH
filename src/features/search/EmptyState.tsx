@@ -1,13 +1,12 @@
 import Link from 'next/link'
-import { POPULAR_EXERCISES } from '@/data/categories'
-import { ICON_WEIGHT, SmileyMeh } from '@/components/icons'
+import { cardClass } from '@/components/ui/Card'
+import { chipClass } from '@/components/ui/Chip'
+import { POPULAR_EXERCISES } from '@/features/body/categories'
+import { ICON_WEIGHT, SmileyMeh } from '@/components/ui/icons'
 
 export default function EmptyState({ query }: { query: string }) {
   return (
-    <div
-      data-testid="empty-state"
-      className="rounded-2xl border border-border bg-surface p-6 sm:p-8"
-    >
+    <div data-testid="empty-state" className={cardClass('solid', 'p-6 sm:p-8')}>
       <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface2 text-muted">
         <SmileyMeh size={22} weight={ICON_WEIGHT} aria-hidden />
       </div>
@@ -20,10 +19,7 @@ export default function EmptyState({ query }: { query: string }) {
       <ul className="mt-5 flex flex-wrap gap-2">
         {POPULAR_EXERCISES.slice(0, 6).map((name) => (
           <li key={name}>
-            <Link
-              href={`/?q=${encodeURIComponent(name)}`}
-              className="inline-flex h-9 items-center rounded-full border border-border bg-surface2 px-3.5 text-[13px] font-medium text-muted hover:border-accent-dim hover:bg-surface3 hover:text-text"
-            >
+            <Link href={`/?q=${encodeURIComponent(name)}`} className={chipClass(false, 'sm')}>
               {name}
             </Link>
           </li>

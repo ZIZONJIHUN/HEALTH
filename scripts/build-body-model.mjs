@@ -24,7 +24,7 @@ const STL_BASE =
   'https://raw.githubusercontent.com/Kevin-Mattheus-Moerman/BodyParts3D/main/assets/BodyParts3D_data/stl'
 const CACHE_DIR = path.join('.cache', 'bodyparts3d')
 const OUT_PATH = path.join('public', 'models', 'body.glb')
-const NODES_OUT_PATH = path.join('src', 'data', 'bodyModelNodes.json')
+const NODES_OUT_PATH = path.join('src', 'features', 'body', 'bodyModelNodes.json')
 const DOWNLOAD_CONCURRENCY = 6
 
 /**
@@ -60,7 +60,7 @@ function clipTriangles(positions, keep) {
 }
 
 /**
- * 노드 이름이 곧 앱의 세부 부위 id 다 (src/data/categories.ts 의 MUSCLE_GROUPS.id).
+ * 노드 이름이 곧 앱의 세부 부위 id 다 (src/features/body/categories.ts 의 MUSCLE_GROUPS.id).
  * 여기와 저기가 어긋나면 화면에 있는 부위가 모델에서 회색으로 비거나, 모델에 있는데
  * 클릭이 안 된다. 빌드가 끝나면 노드 이름을 NODES_OUT_PATH 로 내보내고
  * tests/unit/bodyModel.test.ts 가 대조한다.

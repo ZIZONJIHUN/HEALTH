@@ -1,4 +1,5 @@
-import BodyModelPicker from '@/components/BodyModelPicker'
+import { cardClass } from '@/components/ui/Card'
+import BodyModelPicker from '@/features/body/BodyModelPicker'
 
 /**
  * 3D 인체도 패널. 출처 표기가 여기 붙어 있는 이유는 라이선스 때문이다 —
@@ -9,7 +10,7 @@ export default function BodyPanel({ activeQuery = '' }: { activeQuery?: string }
   return (
     <section
       aria-labelledby="body-panel-heading"
-      className="rounded-2xl border border-border bg-surface/60 p-4 lg:sticky lg:top-24"
+      className={cardClass('muted', 'p-4 lg:sticky lg:top-24')}
     >
       <h2
         id="body-panel-heading"

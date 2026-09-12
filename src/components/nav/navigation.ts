@@ -1,4 +1,4 @@
-import { Barbell, ListChecks } from '@/components/icons'
+import { Barbell, ListChecks } from '@/components/ui/icons'
 
 /** Phosphor 아이콘 컴포넌트가 실제로 받는 props 만 추린 것. 패키지 타입에 묶이지 않는다. */
 type TabIcon = React.ComponentType<{

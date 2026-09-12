@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation'
-import BackButton from '@/components/BackButton'
-import RoutineFeed from '@/components/RoutineFeed'
-import ShortsFeed from '@/components/ShortsFeed'
-import { filterByLength, toLengthFilter } from '@/lib/lengthFilter'
-import { firstParam } from '@/lib/searchParams'
+import BackButton from '@/features/feed/BackButton'
+import RoutineFeed from '@/features/routines/RoutineFeed'
+import ShortsFeed from '@/features/feed/ShortsFeed'
+import { filterByLength, toLengthFilter } from '@/features/search/lengthFilter'
+import { firstParam } from '@/features/search/searchParams'
 import { getVideos } from '@/lib/videoSearch'
 
 export default async function FeedPage({

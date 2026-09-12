@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { LENGTH_FILTERS, type LengthFilterId } from '@/lib/lengthFilter'
+import { LENGTH_FILTERS, type LengthFilterId } from '@/features/search/lengthFilter'
 
 /**
  * 결과 개수와 길이 필터.

@@ -1,6 +1,7 @@
 import Link from 'next/link'
-import { POPULAR_EXERCISES } from '@/data/categories'
-import { Lightning } from '@/components/icons'
+import { chipClass } from '@/components/ui/Chip'
+import { POPULAR_EXERCISES } from '@/features/body/categories'
+import { Lightning } from '@/components/ui/icons'
 
 /**
  * 검색 전 첫 화면. 예전에는 "운동 이름을 검색하거나 위 부위를 선택하세요" 한 줄이 전부라
@@ -21,10 +22,7 @@ export default function SuggestPanel() {
       <ul className="mt-4 flex flex-wrap gap-2">
         {POPULAR_EXERCISES.map((name) => (
           <li key={name}>
-            <Link
-              href={`/?q=${encodeURIComponent(name)}`}
-              className="inline-flex h-10 items-center rounded-xl border border-border bg-surface px-4 text-sm font-medium text-muted hover:border-accent-dim hover:bg-surface2 hover:text-text"
-            >
+            <Link href={`/?q=${encodeURIComponent(name)}`} className={chipClass(false, 'md')}>
               {name}
             </Link>
           </li>

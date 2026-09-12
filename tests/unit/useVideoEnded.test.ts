@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readPlayerMessage } from '@/lib/useVideoEnded'
+import { readPlayerMessage } from '@/features/feed/useVideoEnded'
 
 /**
  * window 의 message 이벤트는 아무 프레임이나 보낼 수 있다. origin 검사가 유일한

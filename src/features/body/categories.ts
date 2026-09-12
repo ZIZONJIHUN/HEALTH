@@ -52,8 +52,13 @@ export const MUSCLE_GROUPS = [
 export type MuscleGroup = (typeof MUSCLE_GROUPS)[number]
 export type MuscleGroupId = MuscleGroup['id']
 
-/** 부위에 딸린 세부 묶음. 없으면 빈 배열('전신'). */
-export function subgroupsOf(parentId: string): readonly MuscleGroup[] {
+/**
+ * 부위에 딸린 세부 묶음. 없으면 빈 배열('전신').
+ *
+ * 인자를 BodyPartId 로 좁힌 이유는 string 이면 오타가 컴파일에 안 걸리고 빈 배열로
+ * 조용히 통과하기 때문이다 — 세부 줄이 그냥 안 열리는 것으로 보인다.
+ */
+export function subgroupsOf(parentId: BodyPartId): readonly MuscleGroup[] {
   return MUSCLE_GROUPS.filter((group) => group.parent === parentId)
 }
 

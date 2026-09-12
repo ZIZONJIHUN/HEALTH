@@ -1,5 +1,5 @@
-import CategoryChips from '@/components/CategoryChips'
-import SearchBar from '@/components/SearchBar'
+import CategoryChips from '@/features/search/CategoryChips'
+import SearchBar from '@/features/search/SearchBar'
 
 /**
  * 페이지와 에러 화면이 같은 머리말을 쓴다. error.tsx 는 page.tsx 의 서브트리를 통째로

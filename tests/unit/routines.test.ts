@@ -24,7 +24,7 @@ function installBrowserStub() {
 /** 모듈 수준 캐시 때문에 테스트마다 새로 import 해야 한다. */
 async function freshModule() {
   vi.resetModules()
-  return import('@/lib/routines')
+  return import('@/features/routines/routines')
 }
 
 const video = (id: string): ShortVideo => ({

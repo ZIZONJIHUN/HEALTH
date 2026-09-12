@@ -13,9 +13,12 @@ import {
   Play,
   Trash,
   X,
-} from '@/components/icons'
-import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/styles'
+} from '@/components/ui/icons'
+import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/ui/Button'
+import { cardClass } from '@/components/ui/Card'
+import { iconButtonClass } from '@/components/ui/IconButton'
 import { formatDuration } from '@/lib/duration'
+import { particle } from '@/lib/korean'
 import {
   deleteRoutine,
   moveVideoInRoutine,
@@ -23,9 +26,9 @@ import {
   renameRoutine,
   restoreRoutine,
   type Routine,
-} from '@/lib/routines'
+} from '@/features/routines/routines'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/lib/useRoutines'
+import { useRoutines } from '@/features/routines/useRoutines'
 
 /** 실행 취소를 띄워 두는 시간. 짧으면 놓치고, 길면 화면에 계속 걸리적거린다. */
 const UNDO_WINDOW_MS = 8000
@@ -69,7 +72,7 @@ export default function RoutineList() {
       <>
         <div
           data-testid="routine-empty"
-          className="rounded-2xl border border-border bg-surface p-6 sm:p-8"
+          className={cardClass('solid', 'p-6 sm:p-8')}
         >
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface2 text-muted">
             <ListChecks size={22} weight={ICON_WEIGHT} aria-hidden />
@@ -126,8 +129,10 @@ function UndoBar({
       className="fixed inset-x-0 bottom-0 z-50 mx-auto flex w-full max-w-md items-center gap-3 px-4 pb-20 md:pb-6"
     >
       <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-surface2 px-3 py-2.5 shadow-pop">
+        {/* 조사를 이름에 붙여 쓴다. 사이에 공백이 들어가면 한국어로 읽히지 않는다. */}
         <p className="min-w-0 flex-1 truncate text-[13px] text-text">
-          <span className="font-semibold">{name}</span> 을 삭제했어요
+          <span className="font-semibold">{name}</span>
+          {particle(name, '을', '를')} 삭제했어요
         </p>
         <button
           type="button"
@@ -141,7 +146,7 @@ function UndoBar({
           type="button"
           aria-label="닫기"
           onClick={onDismiss}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-dim hover:bg-surface3 hover:text-text"
+          className={iconButtonClass('ghost', 'sm')}
         >
           <X size={13} weight={ICON_WEIGHT} aria-hidden />
         </button>
@@ -182,7 +187,7 @@ function RoutineCard({
   return (
     <article
       data-testid="routine-card"
-      className="rounded-2xl border border-border bg-surface/60 p-4 sm:p-5"
+      className={cardClass('muted', 'p-4 sm:p-5')}
     >
       <header className="flex flex-wrap items-center justify-between gap-3">
         {editing ? (
@@ -216,7 +221,7 @@ function RoutineCard({
               type="button"
               aria-label={`${routine.name} 이름 바꾸기`}
               onClick={() => setEditing(true)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-dim hover:bg-surface2 hover:text-text"
+              className={iconButtonClass('ghost', 'sm')}
             >
               <PencilSimple size={13} weight={ICON_WEIGHT} aria-hidden />
             </button>
@@ -339,9 +344,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim hover:bg-surface2 disabled:pointer-events-none disabled:opacity-30 ${
-        danger ? 'hover:text-danger' : 'hover:text-text'
-      }`}
+      className={iconButtonClass(danger ? 'danger' : 'ghost', 'sm')}
     >
       {children}
     </button>

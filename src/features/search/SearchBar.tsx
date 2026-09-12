@@ -1,7 +1,8 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { ICON_WEIGHT, MagnifyingGlass, X } from '@/components/icons'
+import { iconButtonClass } from '@/components/ui/IconButton'
+import { ICON_WEIGHT, MagnifyingGlass, X } from '@/components/ui/icons'
 
 /**
  * GET 폼이라 자바스크립트 없이도 동작하고, 검색 상태가 URL에 남는다.
@@ -53,7 +54,7 @@ export default function SearchBar({ defaultValue = '' }: { defaultValue?: string
               setValue('')
               inputRef.current?.focus()
             }}
-            className="absolute right-2.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-dim hover:bg-surface3 hover:text-text"
+            className={iconButtonClass('ghost', 'sm', 'absolute right-2.5 top-1/2 -translate-y-1/2')}
           >
             <X size={14} weight={ICON_WEIGHT} aria-hidden />
           </button>

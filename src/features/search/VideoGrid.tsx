@@ -1,9 +1,9 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import AddToRoutineButton from '@/components/AddToRoutineButton'
+import AddToRoutineButton from '@/features/routines/AddToRoutineButton'
 import { formatDuration } from '@/lib/duration'
-import { Play } from '@/components/icons'
-import type { LengthFilterId } from '@/lib/lengthFilter'
+import { Play } from '@/components/ui/icons'
+import type { LengthFilterId } from '@/features/search/lengthFilter'
 import type { ShortVideo } from '@/lib/types'
 
 /**

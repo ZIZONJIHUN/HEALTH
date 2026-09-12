@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { BODY_PARTS, matchQuery, subgroupsOf } from '@/data/categories'
+import { chipClass } from '@/components/ui/Chip'
+import { BODY_PARTS, matchQuery, subgroupsOf } from '@/features/body/categories'
 
 /**
  * 부위 칩. 상위 7개를 먼저 보여주고, 하나를 고르면 그 아래에 세부 근육 줄이 열린다.
@@ -85,13 +86,7 @@ function Chip({
       <Link
         href={`/?q=${encodeURIComponent(href)}`}
         aria-current={active ? 'true' : undefined}
-        className={`inline-flex items-center rounded-full border font-medium ${
-          small ? 'h-8 px-3.5 text-[13px]' : 'h-9 px-4 text-sm'
-        } ${
-          active
-            ? 'border-transparent bg-accent text-accent-fg'
-            : 'border-border bg-surface2 text-muted hover:border-border-strong hover:bg-surface3 hover:text-text'
-        }`}
+        className={chipClass(active, small ? 'sm' : 'md')}
       >
         {label}
       </Link>

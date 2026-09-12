@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ICON_WEIGHT, MagnifyingGlass } from '@/components/icons'
-import { MUSCLE_GROUPS, matchQuery, type MuscleGroup } from '@/data/categories'
+import { ICON_WEIGHT, MagnifyingGlass } from '@/components/ui/icons'
+import { MUSCLE_GROUPS, matchQuery, type MuscleGroup } from '@/features/body/categories'
 
 /**
  * 3D 해부 모델로 운동 부위를 고른다.

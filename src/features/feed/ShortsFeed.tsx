@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import FeedSlide from '@/components/FeedSlide'
-import { FEED_PLAYER_BOX } from '@/components/feedPlayerBox'
-import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/icons'
+import FeedSlide from '@/features/feed/FeedSlide'
+import { iconButtonClass } from '@/components/ui/IconButton'
+import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
+import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
 import type { ShortVideo } from '@/lib/types'
 
 /** 현재 슬라이드 기준 앞뒤 몇 개까지 iframe을 마운트할지. */
@@ -213,7 +214,7 @@ function NextUpPanel({
           type="button"
           aria-label="닫기"
           onClick={onDismiss}
-          className="-mt-1 -mr-1 flex h-7 w-7 items-center justify-center rounded-full text-dim hover:bg-surface2 hover:text-text"
+          className={iconButtonClass('ghost', 'sm', '-mt-1 -mr-1')}
         >
           <X size={14} weight={ICON_WEIGHT} aria-hidden />
         </button>
@@ -263,7 +264,7 @@ function FeedNavButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-text backdrop-blur-md hover:border-accent-dim hover:bg-black/70 hover:text-accent disabled:pointer-events-none disabled:opacity-30"
+      className={iconButtonClass('overlay', 'lg')}
     >
       {children}
     </button>

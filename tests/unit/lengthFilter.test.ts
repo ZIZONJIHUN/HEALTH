@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterByLength, toLengthFilter } from '@/lib/lengthFilter'
+import { filterByLength, toLengthFilter } from '@/features/search/lengthFilter'
 import type { ShortVideo } from '@/lib/types'
 
 const video = (id: string, durationSeconds: number): ShortVideo => ({

@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, ICON_WEIGHT, Plus } from '@/components/icons'
-import { addVideoToRoutine, createRoutine } from '@/lib/routines'
-import { useRoutines } from '@/lib/useRoutines'
+import { Check, ICON_WEIGHT, Plus } from '@/components/ui/icons'
+import { addVideoToRoutine, createRoutine } from '@/features/routines/routines'
+import { useRoutines } from '@/features/routines/useRoutines'
 import type { ShortVideo } from '@/lib/types'
 
 /**

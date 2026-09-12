@@ -1,4 +1,4 @@
-import { BODY_PARTS, MUSCLE_GROUPS, POPULAR_EXERCISES } from '../src/data/categories'
+import { BODY_PARTS, MUSCLE_GROUPS, POPULAR_EXERCISES } from '../src/features/body/categories'
 import { getVideos } from '../src/lib/videoSearch'
 
 /**
@@ -59,7 +59,7 @@ async function main() {
     console.warn(`결과가 ${THIN_RESULT_THRESHOLD}개 미만인 검색어가 있습니다:`)
     for (const item of thin) console.warn(`  ${item.query} — ${item.count}개`)
     console.warn('이런 검색어는 화면에서 빈 것처럼 보입니다.')
-    console.warn('src/data/categories.ts 에서 더 흔한 표현으로 바꾸거나 상위 부위로 되돌리세요.')
+    console.warn('src/features/body/categories.ts 에서 더 흔한 표현으로 바꾸거나 상위 부위로 되돌리세요.')
   }
 
   console.log('시드 완료')

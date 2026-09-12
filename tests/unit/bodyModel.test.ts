@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import bodyModelNodes from '@/data/bodyModelNodes.json'
-import { BODY_PARTS, MUSCLE_GROUPS, matchQuery, subgroupsOf } from '@/data/categories'
+import bodyModelNodes from '@/features/body/bodyModelNodes.json'
+import { BODY_PARTS, MUSCLE_GROUPS, matchQuery, subgroupsOf } from '@/features/body/categories'
 
 /**
  * 3D 모델과 화면 데이터가 어긋나지 않는지 본다.

@@ -1,12 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import MessageCard from '@/components/MessageCard'
-import ShortsFeed from '@/components/ShortsFeed'
-import { ICON_WEIGHT, ListChecks } from '@/components/icons'
-import { BUTTON_PRIMARY } from '@/components/styles'
+import MessageCard from '@/components/ui/MessageCard'
+import ShortsFeed from '@/features/feed/ShortsFeed'
+import { ICON_WEIGHT, ListChecks } from '@/components/ui/icons'
+import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/lib/useRoutines'
+import { useRoutines } from '@/features/routines/useRoutines'
 
 /**
  * 루틴 재생. 검색 피드와 달리 서버에서 영상 목록을 가져오지 않는다 —

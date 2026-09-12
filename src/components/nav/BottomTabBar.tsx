@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TABS } from '@/data/navigation'
-import { ICON_WEIGHT } from '@/components/icons'
+import { TABS } from '@/components/nav/navigation'
+import { ICON_WEIGHT } from '@/components/ui/icons'
 
 /** 데스크톱에서는 TopNav 가 대신한다 (md 이상에서 숨긴다). */
 export default function BottomTabBar() {

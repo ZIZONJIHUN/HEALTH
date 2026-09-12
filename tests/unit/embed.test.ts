@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildEmbedUrl } from '@/lib/embed'
+import { buildEmbedUrl } from '@/features/feed/embed'
 
 describe('buildEmbedUrl', () => {
   it('영상 ID로 임베드 경로를 만든다', () => {

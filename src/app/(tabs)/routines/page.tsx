@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import RoutineList from '@/components/RoutineList'
+import RoutineList from '@/features/routines/RoutineList'
 
 export const metadata: Metadata = {
   title: '내 루틴',

@@ -1,4 +1,4 @@
-import { ICON_WEIGHT, WarningCircle } from '@/components/icons'
+import { ICON_WEIGHT, WarningCircle } from '@/components/ui/icons'
 
 export default function QuotaBanner() {
   return (

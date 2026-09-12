@@ -1,4 +1,4 @@
-import type { ShortVideo } from './types'
+import type { ShortVideo } from '@/lib/types'
 
 /**
  * 운동 루틴 저장소.

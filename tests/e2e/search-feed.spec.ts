@@ -1,5 +1,22 @@
 import { expect, test } from '@playwright/test'
 
+test('보안 헤더가 응답에 붙는다', async ({ page }) => {
+  // 헤더는 화면에 보이지 않아서, 확인하는 테스트가 없으면 설정이 사라져도 아무도 모른다.
+  const response = await page.goto('/')
+  const headers = response!.headers()
+
+  expect(headers['x-frame-options']).toBe('DENY')
+  expect(headers['x-content-type-options']).toBe('nosniff')
+  expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
+
+  // 아직 Report-Only 다. 강제로 올릴 때 이 단정을 함께 바꾼다.
+  const csp = headers['content-security-policy-report-only']
+  expect(csp).toContain("frame-ancestors 'none'")
+  // 재생이 이 두 출처에 달려 있다. 빠지면 강제 전환 순간 영상과 썸네일이 전부 죽는다.
+  expect(csp).toContain('https://www.youtube.com')
+  expect(csp).toContain('https://i.ytimg.com')
+})
+
 test('검색하면 쇼츠만 그리드에 나온다', async ({ page }) => {
   await page.goto('/')
   await page.getByLabel('운동 이름').fill('스쿼트')

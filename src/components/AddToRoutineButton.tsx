@@ -17,6 +17,7 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
+  const [failed, setFailed] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
 
@@ -47,9 +48,19 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
     return () => clearTimeout(timer)
   }, [justAdded])
 
+  useEffect(() => {
+    if (!failed) return
+    // 실패 안내는 성공 피드백보다 오래 띄운다. 읽고 무슨 일인지 이해할 시간이 필요하다.
+    const timer = setTimeout(() => setFailed(false), 4000)
+    return () => clearTimeout(timer)
+  }, [failed])
+
   function add(routineId: string) {
-    addVideoToRoutine(routineId, video)
-    setJustAdded(true)
+    // 저장 실패(용량 초과, 시크릿 모드)를 삼키면 화면에는 담긴 것처럼 보이고
+    // 새로고침하면 사라진다. 사용자는 이유를 알 수 없다.
+    const result = addVideoToRoutine(routineId, video)
+    setFailed(result === 'failed')
+    setJustAdded(result !== 'failed')
     setOpen(false)
     setCreating(false)
   }
@@ -137,6 +148,16 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
             </button>
           )}
         </div>
+      ) : null}
+
+      {failed ? (
+        <p
+          role="alert"
+          data-testid="add-failed"
+          className="absolute top-9 right-0 z-30 w-44 rounded-lg border border-danger/35 bg-danger/15 px-2.5 py-2 text-[11px] leading-relaxed text-text shadow-pop"
+        >
+          저장하지 못했어요. 브라우저 저장공간이 가득 찼을 수 있어요.
+        </p>
       ) : null}
     </div>
   )

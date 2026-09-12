@@ -78,15 +78,26 @@ export function loadRoutines(): Routine[] {
 
 const listeners = new Set<() => void>()
 
-/** 같은 탭의 다른 컴포넌트에 변경을 알린다. localStorage 이벤트는 다른 탭에만 간다. */
-function commit(routines: Routine[]): void {
-  if (!isBrowser()) return
+/**
+ * 저장하고 같은 탭의 다른 컴포넌트에 변경을 알린다.
+ * (localStorage 의 storage 이벤트는 다른 탭에만 간다.)
+ *
+ * 저장 성공 여부를 돌려주는 이유는 조용한 실패가 가장 나쁘기 때문이다. 예전에는
+ * 예외를 삼켰는데, 그러면 용량 초과(사파리 시크릿 모드, 저장공간 부족)에서 화면에는
+ * 담긴 것처럼 보이고 새로고침하면 사라진다. 사용자는 이유를 알 수 없다.
+ */
+function commit(routines: Routine[]): boolean {
+  if (!isBrowser()) return false
+
+  let saved = true
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(routines))
   } catch {
-    // 용량 초과 등. 화면에 이미 반영된 상태를 되돌리는 것보다 조용히 두는 편이 낫다.
+    saved = false
   }
+  // 실패했어도 알린다. 구독자가 저장소를 다시 읽어 실제 상태(=저장 안 됨)를 그린다.
   for (const listener of listeners) listener()
+  return saved
 }
 
 export function subscribeRoutines(listener: () => void): () => void {
@@ -117,39 +128,73 @@ export function createRoutine(name: string): Routine {
   return routine
 }
 
-export function renameRoutine(id: string, name: string): void {
+export function renameRoutine(id: string, name: string): boolean {
   const trimmed = name.trim()
-  if (!trimmed) return
-  commit(
+  if (!trimmed) return false
+  return commit(
     loadRoutines().map((routine) =>
       routine.id === id ? { ...routine, name: trimmed } : routine,
     ),
   )
 }
 
-export function deleteRoutine(id: string): void {
-  commit(loadRoutines().filter((routine) => routine.id !== id))
+/**
+ * 루틴을 지우고, 되돌리는 데 필요한 것(루틴 자체와 있던 자리)을 돌려준다.
+ *
+ * 로그인이 없어 저장 위치가 이 브라우저뿐이라 삭제에 복구 경로가 물리적으로 없다.
+ * 확인 대화상자보다 실행 취소가 낫다 — 확인창은 매번 마찰을 주고 사람들은 곧 읽지 않고
+ * 누르지만, 실행 취소는 실수했을 때만 개입한다.
+ */
+export function deleteRoutine(id: string): { routine: Routine; index: number } | null {
+  const routines = loadRoutines()
+  const index = routines.findIndex((routine) => routine.id === id)
+  if (index === -1) return null
+
+  const routine = routines[index]
+  commit(routines.filter((item) => item.id !== id))
+  return { routine, index }
+}
+
+/** deleteRoutine 을 되돌린다. 있던 자리에 되돌려 놓아야 목록 순서가 흔들리지 않는다. */
+export function restoreRoutine(routine: Routine, index: number): boolean {
+  const routines = loadRoutines()
+  // 다른 탭에서 이미 되살아났거나 같은 id 가 있으면 중복을 만들지 않는다.
+  if (routines.some((item) => item.id === routine.id)) return true
+
+  const next = [...routines]
+  next.splice(Math.min(Math.max(index, 0), next.length), 0, routine)
+  return commit(next)
 }
 
 export function getRoutine(id: string): Routine | null {
   return loadRoutines().find((routine) => routine.id === id) ?? null
 }
 
-/** 이미 담긴 영상이면 아무것도 하지 않고 false 를 돌려준다. */
-export function addVideoToRoutine(routineId: string, video: ShortVideo): boolean {
-  let added = false
-  const next = loadRoutines().map((routine) => {
-    if (routine.id !== routineId) return routine
-    if (routine.items.some((item) => item.id === video.id)) return routine
-    added = true
-    return { ...routine, items: [...routine.items, video] }
-  })
-  if (added) commit(next)
-  return added
+/**
+ * 영상을 루틴에 담는다.
+ *
+ * 'failed' 는 저장이 안 된 상태다 — 용량 초과이거나, 방금 만든 루틴 자체가 저장되지
+ * 않아 대상을 찾지 못한 경우다. 둘 다 사용자에게는 "담기지 않았다"로 같으므로
+ * 한 값으로 묶는다. 예전에는 이 경우가 조용히 무시되어 화면에는 담긴 것처럼 보이고
+ * 새로고침하면 사라졌다.
+ */
+export function addVideoToRoutine(
+  routineId: string,
+  video: ShortVideo,
+): 'added' | 'duplicate' | 'failed' {
+  const routines = loadRoutines()
+  const target = routines.find((routine) => routine.id === routineId)
+  if (!target) return 'failed'
+  if (target.items.some((item) => item.id === video.id)) return 'duplicate'
+
+  const next = routines.map((routine) =>
+    routine.id === routineId ? { ...routine, items: [...routine.items, video] } : routine,
+  )
+  return commit(next) ? 'added' : 'failed'
 }
 
-export function removeVideoFromRoutine(routineId: string, videoId: string): void {
-  commit(
+export function removeVideoFromRoutine(routineId: string, videoId: string): boolean {
+  return commit(
     loadRoutines().map((routine) =>
       routine.id === routineId
         ? { ...routine, items: routine.items.filter((item) => item.id !== videoId) }
@@ -163,8 +208,8 @@ export function moveVideoInRoutine(
   routineId: string,
   videoId: string,
   direction: -1 | 1,
-): void {
-  commit(
+): boolean {
+  return commit(
     loadRoutines().map((routine) => {
       if (routine.id !== routineId) return routine
       const from = routine.items.findIndex((item) => item.id === videoId)

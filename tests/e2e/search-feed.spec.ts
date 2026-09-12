@@ -134,6 +134,27 @@ test('담은 운동의 순서를 바꾸고 뺄 수 있다', async ({ page }) => 
   await expect(page.getByTestId('routine-item')).toHaveCount(1)
 })
 
+test('루틴을 실수로 지워도 되돌릴 수 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('지울 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  await page.getByTestId('delete-routine').click()
+  await expect(page.getByTestId('routine-card')).toHaveCount(0)
+
+  // 로그인이 없어 저장 위치가 이 브라우저뿐이다. 되돌릴 길이 없으면 영구 손실이다.
+  await page.getByRole('button', { name: '실행 취소' }).click()
+  await expect(page.getByRole('heading', { name: '지울 루틴' })).toBeVisible()
+  await expect(page.getByTestId('routine-item')).toHaveCount(1)
+
+  // 새로고침해도 살아 있어야 실제로 저장된 것이다.
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '지울 루틴' })).toBeVisible()
+})
+
 test('부위 칩을 누르면 세부 근육이 펼쳐지고 새로고침해도 유지된다', async ({ page }) => {
   await page.goto('/')
   // 처음에는 세부 줄이 없다.

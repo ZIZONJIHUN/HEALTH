@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import {
+  ArrowClockwise,
   CaretDown,
   CaretUp,
   ICON_WEIGHT,
@@ -11,6 +12,7 @@ import {
   PencilSimple,
   Play,
   Trash,
+  X,
 } from '@/components/icons'
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/styles'
 import { formatDuration } from '@/lib/duration'
@@ -19,15 +21,28 @@ import {
   moveVideoInRoutine,
   removeVideoFromRoutine,
   renameRoutine,
+  restoreRoutine,
   type Routine,
 } from '@/lib/routines'
 import { useHydrated } from '@/lib/useHydrated'
 import { useRoutines } from '@/lib/useRoutines'
 
+/** 실행 취소를 띄워 두는 시간. 짧으면 놓치고, 길면 화면에 계속 걸리적거린다. */
+const UNDO_WINDOW_MS = 8000
+
+type Deleted = { routine: Routine; index: number }
+
 export default function RoutineList() {
   const routines = useRoutines()
   // 서버 렌더에는 루틴이 없다. 하이드레이션 전에 "없음" 화면을 그리면 깜빡인다.
   const hydrated = useHydrated()
+  const [deleted, setDeleted] = useState<Deleted | null>(null)
+
+  useEffect(() => {
+    if (!deleted) return
+    const timer = setTimeout(() => setDeleted(null), UNDO_WINDOW_MS)
+    return () => clearTimeout(timer)
+  }, [deleted])
 
   if (!hydrated) {
     return (
@@ -38,41 +53,124 @@ export default function RoutineList() {
     )
   }
 
+  const undoBar = deleted ? (
+    <UndoBar
+      name={deleted.routine.name}
+      onUndo={() => {
+        restoreRoutine(deleted.routine, deleted.index)
+        setDeleted(null)
+      }}
+      onDismiss={() => setDeleted(null)}
+    />
+  ) : null
+
   if (routines.length === 0) {
     return (
-      <div
-        data-testid="routine-empty"
-        className="rounded-2xl border border-border bg-surface p-6 sm:p-8"
-      >
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface2 text-muted">
-          <ListChecks size={22} weight={ICON_WEIGHT} aria-hidden />
+      <>
+        <div
+          data-testid="routine-empty"
+          className="rounded-2xl border border-border bg-surface p-6 sm:p-8"
+        >
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface2 text-muted">
+            <ListChecks size={22} weight={ICON_WEIGHT} aria-hidden />
+          </div>
+          <p className="mt-4 text-[15px] font-semibold text-text">아직 만든 루틴이 없어요.</p>
+          <p className="mt-1 text-sm leading-relaxed text-muted">
+            운동을 검색하고 영상 오른쪽 위의{' '}
+            <span className="font-semibold text-accent">＋</span> 를 누르면 루틴에 담을 수 있어요.
+          </p>
+          <Link href="/" className={`${BUTTON_PRIMARY} mt-5`}>
+            운동 찾으러 가기
+          </Link>
         </div>
-        <p className="mt-4 text-[15px] font-semibold text-text">아직 만든 루틴이 없어요.</p>
-        <p className="mt-1 text-sm leading-relaxed text-muted">
-          운동을 검색하고 영상 오른쪽 위의 <span className="font-semibold text-accent">＋</span> 를
-          누르면 루틴에 담을 수 있어요.
-        </p>
-        <Link href="/" className={`${BUTTON_PRIMARY} mt-5`}>
-          운동 찾으러 가기
-        </Link>
-      </div>
+        {/* 마지막 루틴을 지운 직후가 바로 이 화면이다. 되돌릴 길이 여기에도 있어야 한다. */}
+        {undoBar}
+      </>
     )
   }
 
   return (
-    <ul className="space-y-5">
-      {routines.map((routine) => (
-        <li key={routine.id}>
-          <RoutineCard routine={routine} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="space-y-5">
+        {routines.map((routine) => (
+          <li key={routine.id}>
+            <RoutineCard routine={routine} onDeleted={setDeleted} />
+          </li>
+        ))}
+      </ul>
+      {undoBar}
+    </>
   )
 }
 
-function RoutineCard({ routine }: { routine: Routine }) {
+/**
+ * 삭제 직후 뜨는 실행 취소 막대.
+ *
+ * 토스트가 필요한 곳이 지금 이 하나뿐이라 라이브러리를 넣지 않는다.
+ * role="alert" 로 스크린리더에도 즉시 읽히게 한다 — 되돌릴 수 있다는 사실은
+ * 시간 제한이 있어서, 나중에 읽히면 의미가 없다.
+ */
+function UndoBar({
+  name,
+  onUndo,
+  onDismiss,
+}: {
+  name: string
+  onUndo: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div
+      role="alert"
+      data-testid="undo-delete"
+      className="fixed inset-x-0 bottom-0 z-50 mx-auto flex w-full max-w-md items-center gap-3 px-4 pb-20 md:pb-6"
+    >
+      <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-surface2 px-3 py-2.5 shadow-pop">
+        <p className="min-w-0 flex-1 truncate text-[13px] text-text">
+          <span className="font-semibold">{name}</span> 을 삭제했어요
+        </p>
+        <button
+          type="button"
+          onClick={onUndo}
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg hover:bg-accent-hover"
+        >
+          <ArrowClockwise size={13} weight={ICON_WEIGHT} aria-hidden />
+          실행 취소
+        </button>
+        <button
+          type="button"
+          aria-label="닫기"
+          onClick={onDismiss}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-dim hover:bg-surface3 hover:text-text"
+        >
+          <X size={13} weight={ICON_WEIGHT} aria-hidden />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RoutineCard({
+  routine,
+  onDeleted,
+}: {
+  routine: Routine
+  onDeleted: (deleted: Deleted) => void
+}) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(routine.name)
+  const [syncedName, setSyncedName] = useState(routine.name)
+
+  /*
+    바깥에서 이름이 바뀌면(다른 탭, 실행 취소로 되살아난 루틴) 편집 중이 아닐 때는
+    입력값을 따라가게 한다. 초기값으로만 두면 이 입력창이 옛 이름을 들고 있다가
+    저장하는 순간 바깥 변경을 되돌려버린다.
+    SearchBar 가 defaultValue 에 쓰는 것과 같은 "렌더 중 동기화" 패턴이다.
+  */
+  if (routine.name !== syncedName) {
+    setSyncedName(routine.name)
+    if (!editing) setName(routine.name)
+  }
 
   const totalSeconds = routine.items.reduce((sum, item) => sum + item.durationSeconds, 0)
 
@@ -208,7 +306,11 @@ function RoutineCard({ routine }: { routine: Routine }) {
         ) : null}
         <button
           type="button"
-          onClick={() => deleteRoutine(routine.id)}
+          data-testid="delete-routine"
+          onClick={() => {
+            const deleted = deleteRoutine(routine.id)
+            if (deleted) onDeleted(deleted)
+          }}
           className={BUTTON_SECONDARY}
         >
           루틴 삭제

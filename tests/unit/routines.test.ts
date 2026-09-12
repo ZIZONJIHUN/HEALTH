@@ -64,8 +64,8 @@ describe('루틴 저장소', () => {
     const { createRoutine, addVideoToRoutine, getRoutine } = await freshModule()
     const routine = createRoutine('가슴')
 
-    expect(addVideoToRoutine(routine.id, video('bench'))).toBe(true)
-    expect(addVideoToRoutine(routine.id, video('bench'))).toBe(false)
+    expect(addVideoToRoutine(routine.id, video('bench'))).toBe('added')
+    expect(addVideoToRoutine(routine.id, video('bench'))).toBe('duplicate')
     expect(getRoutine(routine.id)?.items).toHaveLength(1)
   })
 
@@ -148,6 +148,64 @@ describe('루틴 저장소', () => {
     store.set('health-shorts:routines:v1', JSON.stringify([{ id: 'x' }, null, 3]))
     const { loadRoutines } = await freshModule()
     expect(loadRoutines()).toEqual([])
+  })
+
+  it('지운 루틴을 있던 자리에 되돌린다', async () => {
+    const { createRoutine, deleteRoutine, restoreRoutine, loadRoutines } = await freshModule()
+    createRoutine('가슴')
+    const middle = createRoutine('등')
+    createRoutine('하체')
+
+    const deleted = deleteRoutine(middle.id)
+    expect(deleted).not.toBeNull()
+    expect(loadRoutines().map((r) => r.name)).toEqual(['가슴', '하체'])
+
+    restoreRoutine(deleted!.routine, deleted!.index)
+    // 끝에 붙이면 목록 순서가 흔들린다. 있던 자리로 돌아와야 한다.
+    expect(loadRoutines().map((r) => r.name)).toEqual(['가슴', '등', '하체'])
+  })
+
+  it('없는 루틴을 지우면 되돌릴 것이 없다고 알린다', async () => {
+    const { deleteRoutine } = await freshModule()
+    expect(deleteRoutine('없는id')).toBeNull()
+  })
+
+  it('되돌리기를 두 번 해도 루틴이 복제되지 않는다', async () => {
+    const { createRoutine, deleteRoutine, restoreRoutine, loadRoutines } = await freshModule()
+    const routine = createRoutine('가슴')
+    const deleted = deleteRoutine(routine.id)!
+
+    restoreRoutine(deleted.routine, deleted.index)
+    restoreRoutine(deleted.routine, deleted.index)
+
+    expect(loadRoutines()).toHaveLength(1)
+  })
+
+  it('저장에 실패하면 담기지 않았다고 알린다', async () => {
+    installBrowserStub()
+    const { createRoutine, addVideoToRoutine } = await freshModule()
+    const routine = createRoutine('가슴')
+
+    // 용량 초과를 흉내 낸다. 예전에는 이 예외를 삼켜서 화면에는 담긴 것처럼 보이고
+    // 새로고침하면 사라졌다.
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => JSON.stringify([routine]),
+        setItem: () => {
+          throw new DOMException('QuotaExceededError')
+        },
+        removeItem: () => {},
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+
+    expect(addVideoToRoutine(routine.id, video('bench'))).toBe('failed')
+  })
+
+  it('대상 루틴이 없으면 담기 실패다', async () => {
+    const { addVideoToRoutine } = await freshModule()
+    expect(addVideoToRoutine('없는id', video('bench'))).toBe('failed')
   })
 
   it('변경되면 구독자에게 알린다', async () => {

@@ -13,11 +13,15 @@
     "cache:check": "tsx --env-file=.env.local scripts/check-cache.ts",
     "seed": "tsx --env-file=.env.local scripts/seed-cache.ts"
   },
+  "//overrides": "postcss 가 끌어오는 nanoid 가 3.3.18 미만이라 advisory 에 걸린다. postcss 쪽 릴리스를 기다리지 않고 여기서 올린다. 3.3.x 안이라 호환된다.",
+  "overrides": {
+    "nanoid": "^3.3.18"
+  },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
     "@supabase/supabase-js": "^2.110.8",
     "geist": "^1.7.2",
-    "next": "16.2.11",
+    "next": "^16.3.5",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "three": "^0.185.1"
@@ -33,7 +37,7 @@
     "@types/react-dom": "^19",
     "@types/three": "^0.185.4",
     "eslint": "^9",
-    "eslint-config-next": "16.2.11",
+    "eslint-config-next": "^16.3.5",
     "meshoptimizer": "^1.2.0",
     "msw": "^2.15.0",
     "tailwindcss": "^4",

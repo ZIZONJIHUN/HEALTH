@@ -18,6 +18,44 @@ const ENDED = 0
 const HANDSHAKE_TRIES = 12
 const HANDSHAKE_INTERVAL_MS = 500
 
+/**
+ * 받은 메시지를 어떻게 다룰지.
+ * - `foreign`: 우리 것이 아니다. 무시한다.
+ * - `other-player`: YouTube 가 보냈지만 다른 슬라이드의 플레이어다.
+ * - `ack`: 우리 플레이어가 응답했다. 핸드셰이크를 멈춰도 된다.
+ * - `ended`: 우리 플레이어의 영상이 끝났다.
+ */
+export type PlayerMessage = 'foreign' | 'other-player' | 'ack' | 'ended'
+
+/**
+ * window 메시지 하나를 판정한다.
+ *
+ * 훅 밖으로 뺀 이유는 **여기가 보안 경계**이기 때문이다. window 의 message 이벤트는
+ * 아무 프레임이나 보낼 수 있고, origin 검사가 유일한 방어막이다 (보내는 쪽은
+ * targetOrigin '*' 를 쓴다 — 임베드가 youtube.com 과 youtube-nocookie.com 중 어디로도
+ * 갈 수 있고 내보내는 내용은 비밀이 아니라서 그쪽은 문제가 아니다).
+ *
+ * 훅 안에 두면 이 검사가 사라져도 어떤 테스트도 깨지지 않는다.
+ */
+export function readPlayerMessage(
+  origin: string,
+  data: unknown,
+  playerId: string,
+): PlayerMessage {
+  if (origin !== YOUTUBE_ORIGIN) return 'foreign'
+
+  let payload: { id?: string; event?: string; info?: { playerState?: number } }
+  try {
+    payload = typeof data === 'string' ? JSON.parse(data) : (data as typeof payload)
+  } catch {
+    return 'foreign'
+  }
+  if (payload?.id !== playerId) return 'other-player'
+
+  const ended = payload.event === 'infoDelivery' && payload.info?.playerState === ENDED
+  return ended ? 'ended' : 'ack'
+}
+
 export function useVideoEnded(
   iframeRef: RefObject<HTMLIFrameElement | null>,
   active: boolean,
@@ -49,20 +87,11 @@ export function useVideoEnded(
     }
 
     function onMessage(event: MessageEvent) {
-      if (event.origin !== YOUTUBE_ORIGIN) return
-
-      let payload: { id?: string; event?: string; info?: { playerState?: number } }
-      try {
-        payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-      } catch {
-        return
-      }
-      if (payload?.id !== playerId) return
+      const verdict = readPlayerMessage(event.origin, event.data, playerId)
+      if (verdict === 'foreign' || verdict === 'other-player') return
 
       acknowledged = true
-      if (payload.event === 'infoDelivery' && payload.info?.playerState === ENDED) {
-        onEndedRef.current?.()
-      }
+      if (verdict === 'ended') onEndedRef.current?.()
     }
 
     window.addEventListener('message', onMessage)

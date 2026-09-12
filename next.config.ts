@@ -30,7 +30,16 @@ const CSP_DIRECTIVES = [
 
 const nextConfig: NextConfig = {
   images: {
-    remotePatterns: [{ protocol: 'https', hostname: 'i.ytimg.com' }],
+    /*
+      이 앱의 이미지는 전부 YouTube 썸네일이고 이미 최적화된 고정 크기 JPEG 다.
+      Next 이미지 최적화를 거치면 재인코딩으로 얻는 것 없이 지연과 과금만 는다.
+      로더가 YouTube 의 크기별 변형을 직접 고른다 (src/lib/thumbnailLoader.ts).
+
+      loader: 'custom' 이면 최적화 서버를 타지 않으므로 remotePatterns 는 더 이상
+      쓰이지 않는다. 남겨두면 "허용 목록이 지키고 있다"는 착각을 준다.
+    */
+    loader: 'custom',
+    loaderFile: './src/lib/thumbnailLoader.ts',
   },
 
   async headers() {

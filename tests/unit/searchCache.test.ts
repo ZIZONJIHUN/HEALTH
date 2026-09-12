@@ -238,6 +238,88 @@ describe('Supabase가 정상일 때', () => {
     expect(capturedBody?.payload).toEqual(videos)
   })
 
+  it('적중분을 메모리에 채워 같은 검색어를 다시 왕복하지 않는다', async () => {
+    const videos = sampleVideos()
+    let reads = 0
+    server.use(
+      http.get(CACHE_ENDPOINT, () => {
+        reads += 1
+        return HttpResponse.json([{ payload: videos, created_at: daysAgo(0) }])
+      }),
+    )
+
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toEqual(videos)
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toEqual(videos)
+
+    // 7일 동안 변하지 않는 데이터다. 요청마다 Supabase 를 왕복할 이유가 없다.
+    expect(reads).toBe(1)
+  })
+
+  it('메모리에 채울 때 행의 생성 시각을 그대로 쓴다', async () => {
+    const videos = sampleVideos()
+    server.use(
+      http.get(CACHE_ENDPOINT, () =>
+        HttpResponse.json([{ payload: videos, created_at: daysAgo(6) }]),
+      ),
+    )
+
+    // 6일 된 행을 읽어 메모리에 넣는다.
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toEqual(videos)
+
+    // Date.now() 로 찍었다면 여기서도 신선하다고 답해 실질 TTL 이 13일이 된다.
+    const twoDaysLater = NOW + 2 * 24 * 60 * 60 * 1000
+    await expect(readCache('스쿼트', { now: twoDaysLater })).resolves.toBeNull()
+  })
+
+  it('Supabase가 죽어도 메모리에 남은 것으로 답한다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const videos = sampleVideos()
+
+    server.use(
+      http.get(CACHE_ENDPOINT, () =>
+        HttpResponse.json([{ payload: videos, created_at: daysAgo(0) }]),
+      ),
+    )
+    await readCache('스쿼트', { now: NOW })
+
+    // 이제 Supabase 가 죽는다.
+    server.use(
+      http.all(CACHE_ENDPOINT, () =>
+        HttpResponse.json({ message: 'down', code: '500' }, { status: 500 }),
+      ),
+    )
+
+    // 예전에는 Supabase 가 '설정돼 있으면' 메모리를 아예 보지 않아서, 장애 중에
+    // 캐시도 없고 매 요청이 느린 가장 나쁜 조합이 됐다.
+    // 지금은 메모리를 먼저 보므로 죽은 Supabase 에 말을 걸지도 않는다.
+    await expect(readCache('스쿼트', { now: NOW })).resolves.toEqual(videos)
+  })
+
+  it('쓰기 실패 구간에도 같은 검색어가 쿼터를 다시 태우지 않는다', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const videos = sampleVideos()
+    server.use(
+      http.post(CACHE_ENDPOINT, () =>
+        HttpResponse.json({ message: 'down', code: '500' }, { status: 500 }),
+      ),
+      http.get(CACHE_ENDPOINT, () => HttpResponse.json([])),
+    )
+
+    await writeCache('스쿼트', videos)
+
+    // Supabase 쓰기가 실패해도 메모리에는 남아야 한다. 이것이 writeCache 의 목적이다.
+    await expect(readCache('스쿼트')).resolves.toEqual(videos)
+  })
+
+  it('메모리 보관 수에 상한이 있다', async () => {
+    server.use(http.get(CACHE_ENDPOINT, () => HttpResponse.json([])))
+    for (let i = 0; i < 260; i += 1) await writeCache(`운동${i}`, [])
+
+    // 상한이 없으면 오래 떠 있는 프로세스에서 Map 이 계속 자란다.
+    await expect(readCache('운동0')).resolves.toBeNull()
+    await expect(readCache('운동259')).resolves.toEqual([])
+  })
+
   it('행이 없으면 null을 반환하고 경고하지 않는다', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     server.use(http.get(CACHE_ENDPOINT, () => HttpResponse.json([])))

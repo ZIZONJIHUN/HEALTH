@@ -39,6 +39,15 @@ type MemoryEntry = { payload: ShortVideo[]; createdAt: number }
  */
 const memoryCache = new Map<string, MemoryEntry>()
 
+/**
+ * 메모리에 들고 있을 검색어 수.
+ *
+ * 상한이 없으면 오래 떠 있는 프로세스에서 Map 이 계속 자란다. Map 은 삽입 순서를
+ * 지키므로 가장 오래 안 쓴 것부터 버리면 된다 (읽을 때 다시 넣어 순서를 갱신한다).
+ * 45개 고정 검색어(부위 칩 25 + 인기 운동 20)에 여유를 더한 값이다.
+ */
+const MEMORY_CACHE_MAX = 200
+
 /** 테스트 전용. 프로세스 내 캐시를 비운다. */
 export function clearMemoryCache(): void {
   memoryCache.clear()
@@ -48,11 +57,20 @@ function readMemory(key: string, allowStale: boolean, now: number): ShortVideo[]
   const entry = memoryCache.get(key)
   if (!entry) return null
   if (!allowStale && now - entry.createdAt > CACHE_TTL_MS) return null
+
+  // 최근 사용으로 올린다 (재삽입 = 순서 맨 뒤).
+  memoryCache.delete(key)
+  memoryCache.set(key, entry)
   return entry.payload
 }
 
-function writeMemory(key: string, videos: ShortVideo[]): void {
-  memoryCache.set(key, { payload: videos, createdAt: Date.now() })
+function writeMemory(key: string, videos: ShortVideo[], createdAt = Date.now()): void {
+  memoryCache.delete(key)
+  if (memoryCache.size >= MEMORY_CACHE_MAX) {
+    const oldest = memoryCache.keys().next().value
+    if (oldest !== undefined) memoryCache.delete(oldest)
+  }
+  memoryCache.set(key, { payload: videos, createdAt })
 }
 
 /**
@@ -64,33 +82,63 @@ export async function readCache(
   query: string,
   options: { allowStale?: boolean; now?: number } = {},
 ): Promise<ShortVideo[] | null> {
-  const client = getSupabaseClient()
   const { allowStale = false, now = Date.now() } = options
   const key = normalizeQuery(query)
 
-  if (!client) return readMemory(key, allowStale, now)
+  /*
+    메모리를 먼저 본다.
+
+    적중분을 메모리에 채워 두기만 하고 읽을 때 Supabase 를 먼저 보면 왕복이 그대로라
+    아무것도 아낀 것이 없다. 여기서 끊어야 한다.
+
+    다른 인스턴스가 같은 검색어를 새로 채워도 이 프로세스는 TTL 이 끝날 때까지
+    자기 사본을 쓴다. 감수할 만하다 — 캐시의 계약 자체가 "7일 안에 찾은 결과"이고,
+    두 사본 모두 그 계약을 만족한다. 만든 시각은 행의 created_at 을 그대로 들고 있어서
+    TTL 이 늘어나지도 않는다.
+  */
+  const local = readMemory(key, allowStale, now)
+  if (local) return local
+
+  const client = getSupabaseClient()
+  if (!client) return null
 
   try {
     const result = await withTimeout(
       client.from(TABLE).select('payload, created_at').eq('query_key', key).maybeSingle(),
     )
 
+    // 메모리는 이미 봤다. 여기서 남은 선택지는 "없음"뿐이다.
     if (result === TIMED_OUT) {
       warnCacheFailure('읽기', '응답이 없습니다')
-      return readMemory(key, allowStale, now)
+      return null
     }
     if (result.error) {
       warnCacheFailure('읽기', result.error.message)
-      return readMemory(key, allowStale, now)
+      return null
     }
 
     const { data } = result
     if (!data) return null
-    if (!allowStale && !isCacheFresh(data.created_at as string, now)) return null
-    return data.payload as ShortVideo[]
+
+    const createdAt = data.created_at as string
+    const payload = data.payload as ShortVideo[]
+
+    /*
+      Supabase 적중분을 메모리에도 채운다.
+      이게 없으면 7일 동안 변하지 않는 데이터인데도 요청마다 Supabase 를 왕복한다 —
+      인기 검색어일수록 손해가 크다.
+
+      만든 시각은 **행의 created_at 을 그대로** 쓴다. Date.now() 로 찍으면 6일 된 행이
+      메모리에서 다시 7일을 살아 실질 TTL 이 최대 14일이 된다.
+    */
+    const createdAtMs = new Date(createdAt).getTime()
+    if (!Number.isNaN(createdAtMs)) writeMemory(key, payload, createdAtMs)
+
+    if (!allowStale && !isCacheFresh(createdAt, now)) return null
+    return payload
   } catch (cause) {
     warnCacheFailure('읽기', cause)
-    return readMemory(key, allowStale, now)
+    return null
   }
 }
 

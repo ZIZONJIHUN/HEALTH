@@ -1,6 +1,39 @@
 import type { Metadata, Viewport } from 'next'
-import { GeistMono } from 'geist/font/mono'
+import localFont from 'next/font/local'
 import './globals.css'
+
+/**
+ * Geist Mono 를 `geist/font/mono` 대신 직접 선언한다.
+ *
+ * 그 패키지는 `preload` 를 켠 채로 내보낸다. 그래서 이 폰트를 한 글자도 쓰지 않는
+ * 첫 화면에서도 <link rel="preload"> 가 붙어 72KB 를 받았다 — 설계 문서가
+ * "`.tabular` 가 렌더되는 화면에서만 내려가고 첫 화면에서는 preload 되지 않는다"고
+ * 적어 둔 것과 실제 동작이 달랐다(측정으로 확인). 패키지가 옵션을 열어 주지 않아
+ * 같은 파일을 가리키는 선언을 여기에 둔다.
+ *
+ * preload 를 끄면 브라우저는 실제로 `.tabular` 로 그려지는 글자가 생길 때만 받는다.
+ * fallback 목록은 패키지 원본과 같게 유지한다 — 폰트가 도착하기 전 잠깐 보이는
+ * 글꼴이라 폭 차이가 크면 숫자가 튄다.
+ */
+const geistMono = localFont({
+  src: '../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2',
+  variable: '--font-geist-mono',
+  weight: '100 900',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  fallback: [
+    'ui-monospace',
+    'SFMono-Regular',
+    'Roboto Mono',
+    'Menlo',
+    'Monaco',
+    'Liberation Mono',
+    'DejaVu Sans Mono',
+    'Courier New',
+    'monospace',
+  ],
+})
 
 /**
  * Pretendard 는 unicode-range 로 92조각 나뉘어 있어 브라우저가 필요한 조각만 받는다.
@@ -39,7 +72,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ko" className={GeistMono.variable}>
+    <html lang="ko" className={geistMono.variable}>
       <head>
         {PRELOADED_FONT_SUBSETS.map((index) => (
           <link

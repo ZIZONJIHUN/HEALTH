@@ -1,6 +1,28 @@
 import { normalizeQuery } from './cacheKey'
 import { getSupabaseClient, TIMED_OUT, withTimeout } from './supabase'
-import type { ShortVideo } from './types'
+import type { CachedSearch, ShortVideo } from './types'
+
+/**
+ * 저장된 값을 현재 모양으로 맞춘다.
+ *
+ * 페이지 이어받기가 생기기 전에는 payload 가 그냥 `ShortVideo[]` 였다. 이미 들어 있는
+ * 행을 버리면 다시 채우는 데 쿼터가 드니(행당 101 units) 그대로 읽어 쓴다.
+ * 다만 다음 페이지 토큰이 없으므로 그 행들은 TTL 이 끝날 때까지 "더 보기"가 뜨지 않는다.
+ */
+function toCachedSearch(payload: unknown): CachedSearch | null {
+  if (Array.isArray(payload)) {
+    return { videos: payload as ShortVideo[], nextPageToken: null, pages: 1 }
+  }
+  if (payload && typeof payload === 'object' && Array.isArray((payload as CachedSearch).videos)) {
+    const value = payload as CachedSearch
+    return {
+      videos: value.videos,
+      nextPageToken: value.nextPageToken ?? null,
+      pages: value.pages ?? 1,
+    }
+  }
+  return null
+}
 
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -23,7 +45,7 @@ export function isCacheFresh(createdAt: string, now: number): boolean {
   return now - created <= CACHE_TTL_MS
 }
 
-type MemoryEntry = { payload: ShortVideo[]; createdAt: number }
+type MemoryEntry = { payload: CachedSearch; createdAt: number }
 
 /**
  * 프로세스 내 캐시.
@@ -53,7 +75,7 @@ export function clearMemoryCache(): void {
   memoryCache.clear()
 }
 
-function readMemory(key: string, allowStale: boolean, now: number): ShortVideo[] | null {
+function readMemory(key: string, allowStale: boolean, now: number): CachedSearch | null {
   const entry = memoryCache.get(key)
   if (!entry) return null
   if (!allowStale && now - entry.createdAt > CACHE_TTL_MS) return null
@@ -64,13 +86,13 @@ function readMemory(key: string, allowStale: boolean, now: number): ShortVideo[]
   return entry.payload
 }
 
-function writeMemory(key: string, videos: ShortVideo[], createdAt = Date.now()): void {
+function writeMemory(key: string, payload: CachedSearch, createdAt = Date.now()): void {
   memoryCache.delete(key)
   if (memoryCache.size >= MEMORY_CACHE_MAX) {
     const oldest = memoryCache.keys().next().value
     if (oldest !== undefined) memoryCache.delete(oldest)
   }
-  memoryCache.set(key, { payload: videos, createdAt })
+  memoryCache.set(key, { payload, createdAt })
 }
 
 /**
@@ -81,7 +103,7 @@ function writeMemory(key: string, videos: ShortVideo[], createdAt = Date.now()):
 export async function readCache(
   query: string,
   options: { allowStale?: boolean; now?: number } = {},
-): Promise<ShortVideo[] | null> {
+): Promise<CachedSearch | null> {
   const { allowStale = false, now = Date.now() } = options
   const key = normalizeQuery(query)
 
@@ -121,7 +143,11 @@ export async function readCache(
     if (!data) return null
 
     const createdAt = data.created_at as string
-    const payload = data.payload as ShortVideo[]
+    const payload = toCachedSearch(data.payload)
+    if (!payload) {
+      warnCacheFailure('읽기', '저장된 값의 모양이 예상과 다릅니다')
+      return null
+    }
 
     /*
       Supabase 적중분을 메모리에도 채운다.
@@ -147,18 +173,18 @@ export async function readCache(
  * 메모리에는 항상 쓴다 — Supabase 쓰기가 실패한 구간에서도 같은 검색어가
  * 쿼터를 다시 태우지 않게 하는 것이 이 함수의 목적이기 때문이다.
  */
-export async function writeCache(query: string, videos: ShortVideo[]): Promise<void> {
+export async function writeCache(query: string, payload: CachedSearch): Promise<void> {
   const client = getSupabaseClient()
   const key = normalizeQuery(query)
 
-  writeMemory(key, videos)
+  writeMemory(key, payload)
   if (!client) return
 
   try {
     const result = await withTimeout(
       client.from(TABLE).upsert({
         query_key: key,
-        payload: videos,
+        payload,
         created_at: new Date().toISOString(),
       }),
     )

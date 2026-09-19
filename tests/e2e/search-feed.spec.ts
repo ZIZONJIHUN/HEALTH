@@ -28,6 +28,31 @@ test('검색하면 쇼츠만 그리드에 나온다', async ({ page }) => {
   await expect(page.getByText('스쿼트 20분 완전 강의')).toHaveCount(0)
 })
 
+/*
+  다른 테스트와 다른 검색어를 쓴다. 캐시는 "최소 N 페이지" 의미라, 여기서 '스쿼트'를
+  2페이지로 채워 두면 그 뒤 '스쿼트' 테스트들이 9개가 아니라 11개를 받는다.
+  (서버가 한 프로세스라 메모리 캐시를 공유한다.)
+*/
+test('더 보기를 누르면 결과가 이어붙는다', async ({ page }) => {
+  await page.goto('/?q=런지')
+  await expect(page.getByTestId('video-card')).toHaveCount(9)
+
+  await page.getByRole('link', { name: '더 보기' }).click()
+
+  // 2페이지 2개가 덧붙는다. 앞의 9개가 사라지면 안 된다.
+  await expect(page.getByTestId('video-card')).toHaveCount(11)
+  await expect(page.getByText('불가리안 스플릿 스쿼트')).toBeVisible()
+  // 상태가 URL 에 남아야 공유·뒤로가기가 동작한다.
+  await expect(page).toHaveURL(/pages=2/)
+  // 모의 서버는 2페이지에 nextPageToken 을 주지 않는다. 더 받을 것이 없으면 사라져야 한다.
+  await expect(page.getByRole('link', { name: '더 보기' })).toHaveCount(0)
+
+  // 피드도 같은 목록이어야 i 가 가리키는 영상이 그리드에서 누른 것과 같다.
+  await page.getByTestId('video-card').nth(10).click()
+  await expect(page).toHaveURL(/pages=2/)
+  await expect(page.getByTestId('feed-slide')).toHaveCount(11)
+})
+
 test('카드를 누르면 전면 피드에서 재생된다', async ({ page }) => {
   await page.goto('/?q=스쿼트')
   await page.getByTestId('video-card').nth(1).click()

@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { consumeApiBudget, DAILY_CALL_LIMIT, resetApiBudgetForTest } from '@/lib/apiBudget'
 import { MAX_QUERY_LENGTH } from '@/lib/cacheKey'
 import { CACHE_TTL_MS, clearMemoryCache, writeCache } from '@/lib/searchCache'
-import { getVideos } from '@/lib/videoSearch'
+import { getVideos, MAX_PAGES } from '@/lib/videoSearch'
 
 const SEARCH = 'https://www.googleapis.com/youtube/v3/search'
 const VIDEOS = 'https://www.googleapis.com/youtube/v3/videos'
@@ -27,23 +27,28 @@ beforeEach(() => {
   resetApiBudgetForTest()
 })
 
-function mockYouTube(items: Array<{ id: string; duration: string }>) {
+function videoItem(id: string, duration: string) {
+  return {
+    id,
+    snippet: {
+      title: `제목 ${id}`,
+      channelTitle: '헬스톡',
+      thumbnails: { high: { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` } },
+    },
+    contentDetails: { duration },
+  }
+}
+
+function mockYouTube(items: Array<{ id: string; duration: string }>, nextPageToken?: string) {
   server.use(
     http.get(SEARCH, () =>
-      HttpResponse.json({ items: items.map((item) => ({ id: { videoId: item.id } })) }),
+      HttpResponse.json({
+        items: items.map((item) => ({ id: { videoId: item.id } })),
+        ...(nextPageToken ? { nextPageToken } : {}),
+      }),
     ),
     http.get(VIDEOS, () =>
-      HttpResponse.json({
-        items: items.map((item) => ({
-          id: item.id,
-          snippet: {
-            title: `제목 ${item.id}`,
-            channelTitle: '헬스톡',
-            thumbnails: { high: { url: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg` } },
-          },
-          contentDetails: { duration: item.duration },
-        })),
-      }),
+      HttpResponse.json({ items: items.map((item) => videoItem(item.id, item.duration)) }),
     ),
   )
 }
@@ -63,7 +68,14 @@ describe('getVideos', () => {
   it('빈 검색어는 API를 호출하지 않는다', async () => {
     const result = await getVideos('   ')
 
-    expect(result).toEqual({ query: '', videos: [], fromCache: false, quotaExceeded: false })
+    expect(result).toEqual({
+      query: '',
+      videos: [],
+      fromCache: false,
+      quotaExceeded: false,
+      hasMore: false,
+      pages: 0,
+    })
   })
 
   it('상한을 넘는 검색어는 API를 호출하지 않는다', async () => {
@@ -105,7 +117,7 @@ describe('getVideos', () => {
         durationSeconds: 40,
       },
     ]
-    await writeCache('스쿼트', videos)
+    await writeCache('스쿼트', { videos, nextPageToken: null, pages: 1 })
     for (let i = 0; i < DAILY_CALL_LIMIT; i += 1) await consumeApiBudget()
 
     const result = await getVideos('스쿼트')
@@ -150,6 +162,144 @@ describe('getVideos', () => {
     expect(searchCalls).toBe(1)
     expect(first).toBe(second)
     expect(second).toBe(third)
+  })
+
+  it('다음 페이지가 있으면 hasMore 를 켠다', async () => {
+    mockYouTube([{ id: 'a', duration: 'PT30S' }], 'TOKEN2')
+
+    const result = await getVideos('스쿼트')
+
+    expect(result.hasMore).toBe(true)
+    expect(result.pages).toBe(1)
+  })
+
+  it('페이지를 더 요청하면 이어붙인다', async () => {
+    const tokens: Array<string | null> = []
+    server.use(
+      http.get(SEARCH, ({ request }) => {
+        const token = new URL(request.url).searchParams.get('pageToken')
+        tokens.push(token)
+        return HttpResponse.json({
+          items: [{ id: { videoId: token ? 'b' : 'a' } }],
+          ...(token ? {} : { nextPageToken: 'TOKEN2' }),
+        })
+      }),
+      http.get(VIDEOS, ({ request }) => {
+        const id = new URL(request.url).searchParams.get('id') ?? ''
+        return HttpResponse.json({ items: [videoItem(id, 'PT30S')] })
+      }),
+    )
+
+    const result = await getVideos('스쿼트', 2)
+
+    // 1페이지는 토큰 없이, 2페이지는 1페이지가 준 토큰으로.
+    expect(tokens).toEqual([null, 'TOKEN2'])
+    expect(result.videos.map((v) => v.id)).toEqual(['a', 'b'])
+    expect(result.pages).toBe(2)
+    expect(result.hasMore).toBe(false)
+  })
+
+  it('이미 받아둔 페이지는 다시 부르지 않는다', async () => {
+    let searchCalls = 0
+    server.use(
+      http.get(SEARCH, ({ request }) => {
+        searchCalls += 1
+        const token = new URL(request.url).searchParams.get('pageToken')
+        return HttpResponse.json({
+          items: [{ id: { videoId: token ? 'b' : 'a' } }],
+          ...(token ? {} : { nextPageToken: 'TOKEN2' }),
+        })
+      }),
+      http.get(VIDEOS, ({ request }) => {
+        const id = new URL(request.url).searchParams.get('id') ?? ''
+        return HttpResponse.json({ items: [videoItem(id, 'PT30S')] })
+      }),
+    )
+
+    await getVideos('스쿼트', 2)
+    const again = await getVideos('스쿼트', 2)
+
+    expect(searchCalls).toBe(2) // 1페이지 + 2페이지, 그게 전부다
+    expect(again.fromCache).toBe(true)
+    expect(again.videos).toHaveLength(2)
+  })
+
+  it('페이지 수에 상한이 있다', async () => {
+    let searchCalls = 0
+    server.use(
+      http.get(SEARCH, () => {
+        searchCalls += 1
+        return HttpResponse.json({
+          items: [{ id: { videoId: `v${searchCalls}` } }],
+          nextPageToken: `TOKEN${searchCalls + 1}`,
+        })
+      }),
+      http.get(VIDEOS, ({ request }) => {
+        const id = new URL(request.url).searchParams.get('id') ?? ''
+        return HttpResponse.json({ items: [videoItem(id, 'PT30S')] })
+      }),
+    )
+
+    // 상한이 없으면 `?pages=999` 하나로 하루치 쿼터가 날아간다.
+    const result = await getVideos('스쿼트', 999)
+
+    expect(searchCalls).toBe(MAX_PAGES)
+    expect(result.pages).toBe(MAX_PAGES)
+    // 상한에 닿았으면 더 받을 수 없으니 "더 보기"도 뜨면 안 된다.
+    expect(result.hasMore).toBe(false)
+  })
+
+  it('이상한 pages 값은 1로 흡수한다', async () => {
+    mockYouTube([{ id: 'a', duration: 'PT30S' }])
+
+    for (const pages of [0, -5, Number.NaN]) {
+      clearMemoryCache()
+      const result = await getVideos('스쿼트', pages)
+      expect(result.pages).toBe(1)
+    }
+  })
+
+  it('페이지 경계에서 겹치는 영상은 한 번만 넣는다', async () => {
+    server.use(
+      http.get(SEARCH, ({ request }) => {
+        const token = new URL(request.url).searchParams.get('pageToken')
+        return HttpResponse.json({
+          items: [{ id: { videoId: 'a' } }],
+          ...(token ? {} : { nextPageToken: 'TOKEN2' }),
+        })
+      }),
+      http.get(VIDEOS, () => HttpResponse.json({ items: [videoItem('a', 'PT30S')] })),
+    )
+
+    const result = await getVideos('스쿼트', 2)
+
+    // 같은 영상이 그리드에 두 번 뜨면 안 된다.
+    expect(result.videos.map((v) => v.id)).toEqual(['a'])
+  })
+
+  it('2페이지에서 예산이 끊겨도 1페이지는 지킨다', async () => {
+    server.use(
+      http.get(SEARCH, ({ request }) => {
+        const token = new URL(request.url).searchParams.get('pageToken')
+        return HttpResponse.json({
+          items: [{ id: { videoId: token ? 'b' : 'a' } }],
+          nextPageToken: 'TOKEN2',
+        })
+      }),
+      http.get(VIDEOS, ({ request }) => {
+        const id = new URL(request.url).searchParams.get('id') ?? ''
+        return HttpResponse.json({ items: [videoItem(id, 'PT30S')] })
+      }),
+    )
+
+    // 예산을 딱 한 번만 남겨 둔다.
+    for (let i = 0; i < DAILY_CALL_LIMIT - 1; i += 1) await consumeApiBudget()
+
+    const result = await getVideos('스쿼트', 2)
+
+    // 2페이지를 못 받았다고 이미 받은 1페이지까지 버릴 이유가 없다.
+    expect(result.videos.map((v) => v.id)).toEqual(['a'])
+    expect(result.quotaExceeded).toBe(true)
   })
 
   it('요청이 끝나면 합류 맵을 비워 다음 검색이 새로 돈다', async () => {
@@ -201,7 +351,7 @@ describe('getVideos', () => {
         durationSeconds: 45,
       },
     ]
-    await writeCache('스쿼트', videos)
+    await writeCache('스쿼트', { videos, nextPageToken: null, pages: 1 })
 
     const result = await getVideos('스쿼트')
 
@@ -210,6 +360,8 @@ describe('getVideos', () => {
       videos,
       fromCache: true,
       quotaExceeded: false,
+      hasMore: false,
+      pages: 1,
     })
   })
 
@@ -228,7 +380,7 @@ describe('getVideos', () => {
         durationSeconds: 50,
       },
     ]
-    await writeCache('스쿼트', videos)
+    await writeCache('스쿼트', { videos, nextPageToken: null, pages: 1 })
 
     // TTL을 넘긴 시점으로 이동한다. Date만 가짜로 바꿔 MSW의 비동기 처리를 건드리지 않는다.
     const realNow = Date.now()

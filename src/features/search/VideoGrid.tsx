@@ -24,18 +24,27 @@ export default function VideoGrid({
   query,
   videos,
   lengthFilter,
+  pages,
 }: {
   query: string
   videos: ShortVideo[]
   lengthFilter: LengthFilterId
+  /** 지금 몇 페이지까지 받아온 목록인지. 피드가 같은 목록을 만들어야 한다. */
+  pages: number
 }) {
   return (
     <ul className={GRID_CLASSES}>
       {videos.map((video, index) => {
-        // 필터가 걸리면 순서가 달라진다. 피드도 같은 필터를 알아야 i 가 가리키는
-        // 영상이 그리드에서 누른 영상과 같아진다.
+        /*
+          필터가 걸리면 순서가 달라진다. 피드도 같은 필터를 알아야 i 가 가리키는
+          영상이 그리드에서 누른 영상과 같아진다.
+
+          pages 도 같은 이유로 넘긴다. 그리드가 2페이지(100개)를 보여주는데 피드가
+          1페이지(50개)만 받으면, 60번째 카드를 눌렀을 때 전혀 다른 영상이 뜬다.
+        */
         const params = new URLSearchParams({ q: query })
         if (lengthFilter !== 'all') params.set('len', lengthFilter)
+        if (pages > 1) params.set('pages', String(pages))
         params.set('i', String(index))
 
         return (

@@ -18,6 +18,17 @@ const CATALOG = [
   { id: 'vid10', title: '스쿼트 20분 완전 강의', channelTitle: '헬스톡', duration: 'PT20M' },
 ]
 
+// "더 보기" 로만 닿는 2페이지. 1페이지 응답이 nextPageToken 을 줄 때만 요청된다.
+const PAGE_TWO = [
+  { id: 'vid11', title: '스쿼트 점프 응용', channelTitle: '짐랫', duration: 'PT35S' },
+  { id: 'vid12', title: '불가리안 스플릿 스쿼트', channelTitle: '홈트왕', duration: 'PT55S' },
+]
+
+const NEXT_PAGE_TOKEN = 'PAGE2'
+
+/** 두 페이지 어디에 있든 id 로 찾는다. */
+const ALL = [...CATALOG, ...PAGE_TWO]
+
 function videoItem(entry) {
   return {
     id: entry.id,
@@ -60,16 +71,28 @@ const server = createServer((req, res) => {
   }
 
   if (url.pathname.endsWith('/search')) {
-    const items = query.includes('없는운동')
-      ? []
-      : CATALOG.map((entry) => ({ id: { videoId: entry.id } }))
-    res.end(JSON.stringify({ items }))
+    if (query.includes('없는운동')) {
+      res.end(JSON.stringify({ items: [] }))
+      return
+    }
+
+    // pageToken 이 있으면 2페이지다. 2페이지에는 nextPageToken 을 주지 않아
+    // "더 보기"가 사라지는 것까지 검증할 수 있다.
+    const onPageTwo = url.searchParams.get('pageToken') === NEXT_PAGE_TOKEN
+    const entries = onPageTwo ? PAGE_TWO : CATALOG
+
+    res.end(
+      JSON.stringify({
+        items: entries.map((entry) => ({ id: { videoId: entry.id } })),
+        ...(onPageTwo ? {} : { nextPageToken: NEXT_PAGE_TOKEN }),
+      }),
+    )
     return
   }
 
   if (url.pathname.endsWith('/videos')) {
     const ids = (url.searchParams.get('id') ?? '').split(',')
-    res.end(JSON.stringify({ items: CATALOG.filter((e) => ids.includes(e.id)).map(videoItem) }))
+    res.end(JSON.stringify({ items: ALL.filter((e) => ids.includes(e.id)).map(videoItem) }))
     return
   }
 

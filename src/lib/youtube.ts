@@ -79,12 +79,26 @@ function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails'], videoId: 
  */
 const MAX_SEARCH_RESULTS = 50
 
+/** 한 페이지 분량의 결과와, 다음 페이지를 가져올 열쇠. */
+export type SearchPage = {
+  videos: ShortVideo[]
+  /** null 이면 더 받을 것이 없다. */
+  nextPageToken: string | null
+}
+
 /**
  * 운동 이름으로 쇼츠를 찾는다.
  * search.list 는 실제 길이를 주지 않으므로 videos.list 로 한 번 더 확인한다.
- * 비용: search.list 100 units + videos.list 1 unit = 101 units.
+ * 비용: search.list 100 units + videos.list 1 unit = 101 units. **페이지마다 든다.**
+ *
+ * pageToken 은 직전 응답이 준 값이다. YouTube 는 offset 을 지원하지 않아서,
+ * 3페이지를 받으려면 1→2→3 을 차례로 받는 수밖에 없다.
  */
-export async function searchShorts(query: string, apiKey: string): Promise<ShortVideo[]> {
+export async function searchShorts(
+  query: string,
+  apiKey: string,
+  pageToken?: string,
+): Promise<SearchPage> {
   const searchParams = new URLSearchParams({
     key: apiKey,
     part: 'id',
@@ -96,15 +110,21 @@ export async function searchShorts(query: string, apiKey: string): Promise<Short
     relevanceLanguage: 'ko',
     maxResults: String(MAX_SEARCH_RESULTS),
   })
+  if (pageToken) searchParams.set('pageToken', pageToken)
 
   const searchResponse = await fetch(`${apiBase()}/search?${searchParams.toString()}`)
-  const searchJson = await readJson<{ items?: SearchItem[] }>(searchResponse, 'search')
+  const searchJson = await readJson<{ items?: SearchItem[]; nextPageToken?: string }>(
+    searchResponse,
+    'search',
+  )
+
+  const nextPageToken = searchJson.nextPageToken ?? null
 
   const ids = (searchJson.items ?? [])
     .map((item) => item.id?.videoId)
     .filter((id): id is string => Boolean(id))
 
-  if (ids.length === 0) return []
+  if (ids.length === 0) return { videos: [], nextPageToken }
 
   const videosParams = new URLSearchParams({
     key: apiKey,
@@ -123,5 +143,5 @@ export async function searchShorts(query: string, apiKey: string): Promise<Short
     durationSeconds: parseIso8601Duration(item.contentDetails.duration) ?? 0,
   }))
 
-  return filterShorts(videos)
+  return { videos: filterShorts(videos), nextPageToken }
 }

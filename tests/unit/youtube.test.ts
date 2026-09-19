@@ -41,8 +41,8 @@ describe('searchShorts', () => {
 
     const result = await searchShorts('스쿼트', 'test-key')
 
-    expect(result.map((v) => v.id)).toEqual(['a', 'b'])
-    expect(result[0]).toEqual({
+    expect(result.videos.map((v) => v.id)).toEqual(['a', 'b'])
+    expect(result.videos[0]).toEqual({
       id: 'a',
       title: '제목 a',
       channelTitle: '헬스톡',
@@ -86,7 +86,7 @@ describe('searchShorts', () => {
 
     const result = await searchShorts('없는운동', 'test-key')
 
-    expect(result).toEqual([])
+    expect(result.videos).toEqual([])
     expect(videosCalled).toBe(false)
   })
 
@@ -133,7 +133,7 @@ describe('searchShorts', () => {
 
     const result = await searchShorts('스쿼트', 'test-key')
 
-    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/default.jpg')
+    expect(result.videos[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/default.jpg')
   })
 
   it('썸네일이 하나도 없으면 영상 ID로 URL을 만든다', async () => {
@@ -154,7 +154,7 @@ describe('searchShorts', () => {
 
     const result = await searchShorts('스쿼트', 'test-key')
 
-    expect(result[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/hqdefault.jpg')
+    expect(result.videos[0].thumbnailUrl).toBe('https://i.ytimg.com/vi/a/hqdefault.jpg')
   })
 
   it('403 rateLimitExceeded 면 QuotaExceededError를 던진다', async () => {

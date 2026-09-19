@@ -13,6 +13,7 @@ export default async function FeedPage({
     q?: string | string[]
     i?: string | string[]
     len?: string | string[]
+    pages?: string | string[]
     routine?: string | string[]
   }>
 }) {
@@ -35,7 +36,10 @@ export default async function FeedPage({
   const q = firstParam(params.q) ?? ''
   if (!q.trim()) notFound()
 
-  const result = await getVideos(q)
+  // pages 도 그리드와 맞춰야 한다. 그리드가 2페이지를 보여주는데 여기서 1페이지만
+  // 받으면 60번째 카드를 눌렀을 때 전혀 다른 영상이 뜬다.
+  // 이미 캐시에 있는 분량이라 쿼터를 다시 쓰지 않는다.
+  const result = await getVideos(q, Number(firstParam(params.pages) ?? 1))
   // 그리드가 길이 필터를 걸고 있었다면 여기도 같은 필터를 걸어야
   // i 가 가리키는 영상이 그리드에서 누른 영상과 같아진다.
   const videos = filterByLength(result.videos, toLengthFilter(firstParam(params.len)).maxSeconds)

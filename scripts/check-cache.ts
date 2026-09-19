@@ -32,15 +32,19 @@ async function main() {
   }
 
   const probeQuery = '__cache_check__'
-  const probe = [
-    {
-      id: 'probe',
-      title: '왕복 검증',
-      channelTitle: 'check',
-      thumbnailUrl: 'https://i.ytimg.com/vi/probe/hqdefault.jpg',
-      durationSeconds: 42,
-    },
-  ]
+  const probe = {
+    videos: [
+      {
+        id: 'probe',
+        title: '왕복 검증',
+        channelTitle: 'check',
+        thumbnailUrl: 'https://i.ytimg.com/vi/probe/hqdefault.jpg',
+        durationSeconds: 42,
+      },
+    ],
+    nextPageToken: null,
+    pages: 1,
+  }
 
   await writeCache(probeQuery, probe)
   const readBack = await readCache(probeQuery)
@@ -54,7 +58,7 @@ async function main() {
     return
   }
 
-  if (readBack[0]?.durationSeconds !== 42) {
+  if (readBack.videos[0]?.durationSeconds !== 42) {
     console.error('실패: 읽은 값이 쓴 값과 다릅니다.', readBack)
     process.exitCode = 1
     return

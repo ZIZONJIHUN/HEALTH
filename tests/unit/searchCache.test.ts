@@ -59,16 +59,16 @@ describe('isCacheFresh', () => {
 })
 
 describe('Supabase 환경변수가 없을 때', () => {
-  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+  const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
 
   beforeEach(() => {
-    delete process.env.SUPABASE_URL
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL
     delete process.env.SUPABASE_SERVICE_ROLE_KEY
     clearMemoryCache()
   })
 
   afterEach(() => {
-    if (saved.url) process.env.SUPABASE_URL = saved.url
+    if (saved.url) process.env.NEXT_PUBLIC_SUPABASE_URL = saved.url
     if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
   })
 
@@ -118,10 +118,10 @@ describe('Supabase 환경변수가 없을 때', () => {
 })
 
 describe('Supabase 호출이 실패할 때', () => {
-  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+  const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
 
   beforeEach(() => {
-    process.env.SUPABASE_URL = SUPABASE_URL
+    process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
     clearMemoryCache()
     // PostgREST 오류 응답(4xx/5xx)으로 실패를 시뮬레이션한다.
@@ -140,8 +140,8 @@ describe('Supabase 호출이 실패할 때', () => {
   })
 
   afterEach(() => {
-    if (saved.url) process.env.SUPABASE_URL = saved.url
-    else delete process.env.SUPABASE_URL
+    if (saved.url) process.env.NEXT_PUBLIC_SUPABASE_URL = saved.url
+    else delete process.env.NEXT_PUBLIC_SUPABASE_URL
     if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
     else delete process.env.SUPABASE_SERVICE_ROLE_KEY
     vi.restoreAllMocks()
@@ -171,17 +171,17 @@ describe('Supabase 호출이 실패할 때', () => {
 })
 
 describe('Supabase가 정상일 때', () => {
-  const saved = { url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+  const saved = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
 
   beforeEach(() => {
-    process.env.SUPABASE_URL = SUPABASE_URL
+    process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
     clearMemoryCache()
   })
 
   afterEach(() => {
-    if (saved.url) process.env.SUPABASE_URL = saved.url
-    else delete process.env.SUPABASE_URL
+    if (saved.url) process.env.NEXT_PUBLIC_SUPABASE_URL = saved.url
+    else delete process.env.NEXT_PUBLIC_SUPABASE_URL
     if (saved.key) process.env.SUPABASE_SERVICE_ROLE_KEY = saved.key
     else delete process.env.SUPABASE_SERVICE_ROLE_KEY
     vi.restoreAllMocks()

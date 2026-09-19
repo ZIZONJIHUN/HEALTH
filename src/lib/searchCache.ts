@@ -1,5 +1,5 @@
 import { normalizeQuery } from './cacheKey'
-import { getSupabaseClient, TIMED_OUT, withTimeout } from './supabase'
+import { getSupabaseClient, TIMED_OUT, withTimeout } from './supabase/service'
 import type { CachedSearch, ShortVideo } from './types'
 
 /**

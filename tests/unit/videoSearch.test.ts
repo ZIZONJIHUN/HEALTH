@@ -18,7 +18,7 @@ afterAll(() => server.close())
 beforeEach(() => {
   process.env.YOUTUBE_API_KEY = 'test-key'
   // Supabase를 끊어 순수 조회 경로를 검증한다.
-  delete process.env.SUPABASE_URL
+  delete process.env.NEXT_PUBLIC_SUPABASE_URL
   delete process.env.SUPABASE_SERVICE_ROLE_KEY
   // Supabase가 없으면 Task 5b의 메모리 폴백이 동작한다.
   // 비우지 않으면 앞 테스트가 채운 항목을 뒤 테스트가 캐시 히트로 받아

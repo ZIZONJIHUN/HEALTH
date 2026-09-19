@@ -30,7 +30,8 @@ export default defineConfig({
       env: {
         YOUTUBE_API_KEY: 'test-key',
         YOUTUBE_API_BASE: 'http://127.0.0.1:4010/youtube/v3',
-        SUPABASE_URL: '',
+        NEXT_PUBLIC_SUPABASE_URL: '',
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: '',
         SUPABASE_SERVICE_ROLE_KEY: '',
       },
     },

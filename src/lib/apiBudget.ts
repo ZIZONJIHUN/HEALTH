@@ -1,4 +1,4 @@
-import { getSupabaseClient, TIMED_OUT, withTimeout } from './supabase'
+import { getSupabaseClient, TIMED_OUT, withTimeout } from './supabase/service'
 
 /**
  * YouTube 호출 횟수를 하루 단위로 센다.

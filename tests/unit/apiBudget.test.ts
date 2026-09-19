@@ -8,7 +8,7 @@ import { consumeApiBudget, DAILY_CALL_LIMIT, resetApiBudgetForTest } from '@/lib
  * 프로젝트에서 이루어진다.
  */
 beforeEach(() => {
-  delete process.env.SUPABASE_URL
+  delete process.env.NEXT_PUBLIC_SUPABASE_URL
   delete process.env.SUPABASE_SERVICE_ROLE_KEY
   resetApiBudgetForTest()
 })

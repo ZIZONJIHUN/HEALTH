@@ -14,7 +14,7 @@
 
 ### Supabase는 선택이다
 
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 를 비워두면 검색 캐시가 프로세스 내부 메모리로
+`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 를 비워두면 검색 캐시가 프로세스 내부 메모리로
 폴백한다 (`src/lib/searchCache.ts`). 같은 프로세스가 살아있는 동안은 같은 검색어를 반복해도
 쿼터를 쓰지 않는다. 다만 이 캐시는 프로세스를 재시작하거나 인스턴스가 여러 개 떠 있으면
 공유되지 않는다.
@@ -23,7 +23,7 @@ Supabase를 붙이면 캐시가 인스턴스 간, 재시작 간에도 유지된�
 여러 사람이 같은 캐시를 공유하려면 다음을 설정한다.
 
 1. Supabase 프로젝트를 만들고 SQL Editor에서 `supabase/migrations/0001_search_cache.sql` 을 실행한다.
-2. Supabase 프로젝트 설정에서 URL과 `service_role` 키를 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 에 넣는다.
+2. Supabase 프로젝트 설정에서 URL과 `service_role` 키를 `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 에 넣는다.
 3. `npm run cache:check` 로 실제 쓰기→읽기 왕복이 되는지 확인한다. 마이그레이션 미실행,
    `anon` 키를 잘못 넣은 경우, 테이블/컬럼명 오타 등을 여기서 바로 잡아낸다.
 
@@ -106,4 +106,4 @@ pg_cron이 있으면 주 1회 스케줄에 걸어 둔다.
 
 ## 배포
 
-Vercel에 GitHub 저장소를 연결하고 환경변수 `YOUTUBE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 를 등록한다. `YOUTUBE_API_BASE` 는 설정하지 않는다 (테스트 전용).
+Vercel에 GitHub 저장소를 연결하고 환경변수 `YOUTUBE_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` 를 등록한다. `YOUTUBE_API_BASE` 는 설정하지 않는다 (테스트 전용).

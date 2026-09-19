@@ -9,7 +9,7 @@ import { readCache, writeCache } from '../src/lib/searchCache'
  */
 async function deleteProbe(queryKey: string): Promise<void> {
   try {
-    const url = process.env.SUPABASE_URL
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!url || !key) return
     const client = createClient(url, key, { auth: { persistSession: false } })
@@ -25,8 +25,8 @@ async function deleteProbe(queryKey: string): Promise<void> {
  * 목 테스트로는 PostgREST가 요청을 받아들이는지 알 수 없어서 이 스크립트가 필요하다.
  */
 async function main() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.log('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없습니다.')
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log('NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 없습니다.')
     console.log('캐시 없이도 앱은 동작합니다. 다만 같은 검색어도 매번 쿼터를 씁니다.')
     return
   }

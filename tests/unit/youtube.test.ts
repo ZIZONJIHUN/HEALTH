@@ -67,7 +67,9 @@ describe('searchShorts', () => {
     expect(captured?.get('videoEmbeddable')).toBe('true')
     expect(captured?.get('regionCode')).toBe('KR')
     expect(captured?.get('relevanceLanguage')).toBe('ko')
-    expect(captured?.get('maxResults')).toBe('25')
+    // search.list 는 몇 개를 요청하든 100 units 다. 50 미만을 요청하면
+    // 낸 값의 일부만 받는 것이라 아낀 것이 없고 결과만 줄어든다.
+    expect(captured?.get('maxResults')).toBe('50')
     expect(captured?.get('q')).toBe('스쿼트')
     expect(captured?.get('key')).toBe('test-key')
   })

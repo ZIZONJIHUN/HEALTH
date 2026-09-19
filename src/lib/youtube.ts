@@ -69,6 +69,17 @@ function pickThumbnail(thumbnails: VideoItem['snippet']['thumbnails'], videoId: 
 }
 
 /**
+ * search.list 가 한 번에 돌려줄 수 있는 최대치.
+ *
+ * **search.list 는 5개를 요청하든 50개를 요청하든 똑같이 100 units다.** 적게 요청하면
+ * 아낀 것이 없고 결과만 줄어든다. 예전에 25로 두었던 탓에 낸 값의 절반만 받고 있었다.
+ *
+ * videos.list 도 id 를 50개까지 한 번에 받고 1 unit 이라 호출 수가 늘지 않는다.
+ * 즉 25 → 50 은 비용이 완전히 같다.
+ */
+const MAX_SEARCH_RESULTS = 50
+
+/**
  * 운동 이름으로 쇼츠를 찾는다.
  * search.list 는 실제 길이를 주지 않으므로 videos.list 로 한 번 더 확인한다.
  * 비용: search.list 100 units + videos.list 1 unit = 101 units.
@@ -83,7 +94,7 @@ export async function searchShorts(query: string, apiKey: string): Promise<Short
     videoEmbeddable: 'true',
     regionCode: 'KR',
     relevanceLanguage: 'ko',
-    maxResults: '25',
+    maxResults: String(MAX_SEARCH_RESULTS),
   })
 
   const searchResponse = await fetch(`${apiBase()}/search?${searchParams.toString()}`)

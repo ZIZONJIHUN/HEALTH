@@ -57,3 +57,6 @@ next-env.d.ts
 
 # 3D 모델 빌드 캐시 (원본 STL 293MB, 재생성 가능)
 /.cache/
+
+# Playwright MCP 도구가 남기는 콘솔 로그
+/.playwright-mcp/

@@ -59,6 +59,7 @@ URL 이 서버·브라우저 양쪽에 필요해졌다. `SUPABASE_URL` 과 `NEXT
 - Move: `src/lib/supabase.ts` → `src/lib/supabase/service.ts`
 - Modify: `src/lib/searchCache.ts`, `src/lib/apiBudget.ts` (import 경로)
 - Modify: `scripts/seed-cache.ts`, `scripts/check-cache.ts`, `playwright.config.ts`, `.env.local.example`, `README.md`
+- Modify: `tests/unit/searchCache.test.ts`, `tests/unit/apiBudget.test.ts`, `tests/unit/videoSearch.test.ts` — 이 셋이 `process.env.SUPABASE_URL` 을 직접 세팅·삭제한다. 이름을 바꾸지 않으면 코드는 새 이름을 읽고 테스트는 옛 이름을 세팅해서, **Supabase 경로 테스트가 전부 "미설정" 분기로 빠진다.** 실패가 아니라 조용히 다른 길을 타므로 더 나쁘다
 - Test: `tests/unit/supabaseEnv.test.ts`
 
 **Interfaces:**
@@ -181,6 +182,19 @@ git mv src/lib/supabase.ts src/lib/supabase/service.ts
 sed -i "s#from './supabase'#from './supabase/service'#" src/lib/searchCache.ts src/lib/apiBudget.ts
 sed -i 's#SUPABASE_URL#NEXT_PUBLIC_SUPABASE_URL#g' scripts/seed-cache.ts scripts/check-cache.ts
 ```
+
+**기존 테스트 셋도 같이 바꾼다.** `process.env.SUPABASE_URL` 을 직접 세팅·삭제하는
+곳들이다. 빠뜨리면 코드는 새 이름을 읽고 테스트는 옛 이름을 세팅해서, Supabase 경로
+테스트가 전부 "미설정" 분기로 조용히 빠진다 — 실패가 아니라 다른 길을 타므로 더 나쁘다.
+
+```bash
+sed -i 's#process\.env\.SUPABASE_URL#process.env.NEXT_PUBLIC_SUPABASE_URL#g' \
+  tests/unit/searchCache.test.ts tests/unit/apiBudget.test.ts tests/unit/videoSearch.test.ts
+```
+
+`tests/unit/searchCache.test.ts` 에는 같은 이름의 **지역 상수**도 있다
+(`const SUPABASE_URL = 'http://supabase.test'`). 그건 env 키가 아니라 테스트용 주소라
+그대로 둔다 — 위 sed 는 `process.env.` 가 붙은 것만 건드리므로 안전하다.
 
 `playwright.config.ts` 의 env 블록을 바꾼다 (기존 주석은 그대로 두고 키 이름만):
 

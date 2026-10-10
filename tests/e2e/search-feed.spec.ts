@@ -201,3 +201,28 @@ test('부위 칩을 누르면 세부 근육이 펼쳐지고 새로고침해도 �
   await page.reload()
   await expect(page.getByRole('link', { name: '광배근' })).toBeVisible()
 })
+
+test('내 정보 화면은 Supabase 없이도 동작한다', async ({ page }) => {
+  // E2E 환경에는 NEXT_PUBLIC_SUPABASE_* 가 빈 값이다 (playwright.config.ts).
+  // 그 상태에서 화면이 깨지지 않고 이유를 알려주는지 본다.
+  await page.goto('/account')
+
+  await expect(page.getByRole('heading', { name: '내 정보' })).toBeVisible()
+  await expect(page.getByTestId('sign-in')).toBeDisabled()
+  await expect(page.getByText('Supabase 설정이 없어')).toBeVisible()
+})
+
+test('로그인 실패는 에러 화면 대신 안내로 끝난다', async ({ page }) => {
+  await page.goto('/account?auth=failed')
+
+  await expect(page.getByTestId('account-notice')).toBeVisible()
+  // 앱이 죽지 않고 화면이 그대로 있어야 한다.
+  await expect(page.getByRole('heading', { name: '내 정보' })).toBeVisible()
+})
+
+test('OAuth 콜백이 외부 주소로 보내지 않는다', async ({ page }) => {
+  // code 가 없으므로 실패 경로를 탄다. next 가 외부여도 우리 도메인에 남아야 한다.
+  await page.goto('/auth/callback?next=https://example.com')
+
+  await expect(page).toHaveURL(/\/account\?auth=failed/)
+})

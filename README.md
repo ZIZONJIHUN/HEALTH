@@ -19,6 +19,10 @@
 쿼터를 쓰지 않는다. 다만 이 캐시는 프로세스를 재시작하거나 인스턴스가 여러 개 떠 있으면
 공유되지 않는다.
 
+키가 세 개인 이유는 쓰임이 다르기 때문이다. **검색 캐시는 URL + `service_role` 키만**
+쓰고, **로그인은 URL + `anon` 키**를 쓴다. 그래서 캐시만 켜고 로그인은 끈 상태,
+또는 그 반대도 가능하다. 로그인 설정은 아래 "로그인" 절에 따로 적었다.
+
 Supabase를 붙이면 캐시가 인스턴스 간, 재시작 간에도 유지된다. 개발 중 쿼터를 아끼거나
 여러 사람이 같은 캐시를 공유하려면 다음을 설정한다.
 
@@ -29,6 +33,12 @@ Supabase를 붙이면 캐시가 인스턴스 간, 재시작 간에도 유지된�
 
 `YOUTUBE_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` 는 서버에서만 읽는다. 클라이언트 번들에
 포함되지 않으며, `NEXT_PUBLIC_` 접두사를 붙이지 않는다.
+
+반대로 `NEXT_PUBLIC_SUPABASE_URL` 과 `NEXT_PUBLIC_SUPABASE_ANON_KEY` 는 브라우저에
+들어간다. 공개돼도 안전하다 — `anon` 키로 할 수 있는 일은 RLS 가 정한 범위뿐이다.
+`service_role` 키는 다르다. 그건 **RLS 를 통째로 우회하므로** 절대 `NEXT_PUBLIC_` 을
+붙이지 않는다. 코드에서도 그 키를 쓰는 경로를 `src/lib/supabase/service.ts` 하나로
+가둬 두고, 거기서 닿는 테이블은 `search_cache` 와 `api_budget` 뿐이다.
 
 ## 실행
 
@@ -107,6 +117,55 @@ Supabase를 쓴다면 SQL Editor에서 순서대로 실행한다.
 
 만료된 캐시 행 정리는 `select public.prune_search_cache();` 로 돌린다.
 pg_cron이 있으면 주 1회 스케줄에 걸어 둔다.
+
+## 로그인
+
+구글 OAuth 하나만 지원한다. 로그인은 **선택**이다 — 비로그인 상태로도 검색·재생·루틴이
+전부 동작한다. 지금 단계에서 로그인이 하는 일은 계정을 만드는 것까지이고, 기기 간
+루틴 동기화는 다음 단계다. 그래서 "내 정보"는 아직 탭바에 없고 `/account` 주소로만 닿는다.
+
+### 설정
+
+1. Supabase 프로젝트를 만들고 마이그레이션 `0001`~`0003` 을 실행한다.
+2. Google Cloud Console → OAuth 동의 화면 + 웹 애플리케이션 클라이언트 ID/시크릿 발급.
+3. Supabase 대시보드 → Authentication → Providers → Google 에 ID/시크릿 입력.
+4. Google 쪽 "승인된 리디렉션 URI" 에 Supabase 콜백
+   (`https://<project>.supabase.co/auth/v1/callback`) 등록.
+5. Supabase → Authentication → URL Configuration → Site URL 에 `http://localhost:3000`,
+   Redirect URLs 에 `http://localhost:3000/**` 와 배포 도메인을 추가.
+6. `.env.local` 에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 를 넣는다.
+
+비워두면 로그인 버튼이 비활성이고 이유가 화면에 뜬다. 나머지 앱은 정상 동작한다.
+
+### 관리자
+
+승격 UI 는 만들지 않았다. 관리자가 한둘인 규모에서 승격 화면은 권한 상승 취약점
+표면만 만든다. Supabase 콘솔에서 직접 바꾼다.
+
+```sql
+update public.profiles set role = 'admin' where id = '<uuid>';
+```
+
+### 수동 확인이 필요한 부분
+
+**실제 구글 OAuth 왕복은 CI 에서 검증할 수 없다.** 진짜 구글 계정과 동의 화면이
+필요하기 때문이다. "테스트가 다 통과했다"가 그 왕복까지 검증했다는 뜻이 아니다.
+자동 테스트가 덮는 것은 비로그인 화면, 실패 안내, 콜백이 외부 주소로 보내지 않는지까지다.
+
+배포 전에 손으로 확인한다.
+
+1. `/account` 에서 `구글로 로그인` 버튼이 **활성**이다 (비활성이면 `.env.local` 을 다시 본다)
+2. 누르면 구글 동의 화면이 뜨고, 동의하면 `/account` 로 돌아와 이메일이 보인다
+3. 개발자도구 → Application → Cookies 에 `sb-` 로 시작하는 쿠키가 있다
+4. 새로고침해도 로그인이 유지된다
+5. 구글 동의 화면에서 **취소**하면 `/account` 로 돌아와 안내가 뜨고 앱은 정상이다
+6. Supabase 콘솔 → Table Editor → `profiles` 에 방금 가입한 행이 있다
+   (없으면 `0003` 마이그레이션을 실행하지 않은 것이다)
+7. `로그아웃` 뒤 `/routines` 에 루틴이 **그대로 있다** — 로컬 루틴은 계정이 아니라
+   브라우저의 것이라 로그아웃으로 지워지면 안 된다
+8. 세션 갱신: Supabase 콘솔에서 JWT 만료를 짧게(예: 60초) 바꾸고 그 시간이 지난 뒤
+   새로고침했을 때 로그인이 유지되는지 본다. 끝나면 원래 값으로 되돌린다.
+   유지되지 않으면 `proxy.ts` 의 `matcher` 가 그 경로를 제외하고 있는지 의심한다
 
 ## 배포
 

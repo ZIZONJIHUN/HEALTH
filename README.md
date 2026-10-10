@@ -48,6 +48,7 @@ npm test            # 단위 테스트
 npm run test:e2e    # E2E (모의 YouTube 서버를 자동으로 띄운다)
 npm run seed        # 인기 운동 20개 캐시 시드 (Supabase 필수 — 없으면 즉시 종료한다)
 npm run cache:check # Supabase 캐시 왕복 확인
+npm run auth:check  # 로그인 설정 확인 (마이그레이션·anon 키·RLS)
 ```
 
 ## 에셋
@@ -134,8 +135,13 @@ pg_cron이 있으면 주 1회 스케줄에 걸어 둔다.
 5. Supabase → Authentication → URL Configuration → Site URL 에 `http://localhost:3000`,
    Redirect URLs 에 `http://localhost:3000/**` 와 배포 도메인을 추가.
 6. `.env.local` 에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 를 넣는다.
+7. `npm run auth:check` 로 설정이 섰는지 확인한다.
 
 비워두면 로그인 버튼이 비활성이고 이유가 화면에 뜬다. 나머지 앱은 정상 동작한다.
+
+`auth:check` 는 브라우저를 열기 전에 걸러지는 것들을 본다 — 마이그레이션 `0003` 미실행,
+anon 키 오타, URL 오타, 그리고 **RLS 가 열려 있어 로그인하지 않은 사람에게 남의 프로필이
+보이는 상태**. 실제 구글 OAuth 왕복은 이 스크립트로 확인할 수 없다 (아래 수동 확인).
 
 ### 관리자
 

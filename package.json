@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "cache:check": "tsx --env-file=.env.local scripts/check-cache.ts",
+    "auth:check": "tsx --env-file=.env.local scripts/check-auth.ts",
     "seed": "tsx --env-file=.env.local scripts/seed-cache.ts"
   },
   "//overrides": "postcss 가 끌어오는 nanoid 가 3.3.18 미만이라 advisory 에 걸린다. postcss 쪽 릴리스를 기다리지 않고 여기서 올린다. 3.3.x 안이라 호환된다.",

@@ -37,7 +37,17 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // 반드시 불러야 한다. 이 호출이 만료된 토큰을 갱신하고 위 setAll 을 깨운다.
+  /*
+    반드시 불러야 한다. 이 호출이 만료된 토큰을 갱신하고 위 setAll 을 깨운다.
+
+    비용을 알고 쓴다: **로그인한 사용자에게는 페이지 요청마다 Supabase 왕복이 한 번씩
+    붙는다.** 토큰을 서버에서 검증하는 값이라 피할 수 없고, 피하려고 getSession() 으로
+    바꾸면 쿠키를 그대로 믿는 셈이 되어 검증이 사라진다.
+
+    비로그인 사용자에게는 인증 쿠키가 없어 세션 초기화 자체가 일어나지 않으므로
+    (@supabase/ssr 의 지연 초기화) 네트워크를 타지 않는다. 익명 경로가 이 앱의 주된
+    흐름이라 전체 비용은 크지 않다.
+  */
   await supabase.auth.getUser()
 
   return response

@@ -445,19 +445,39 @@
       <span class="sec-num">02</span>
       <h2>Google Cloud에서 OAuth 클라이언트 발급</h2>
     </div>
-    <p class="sec-where">console.cloud.google.com → API 및 서비스</p>
+    <p class="sec-where">console.cloud.google.com → Google Auth Platform</p>
+
+    <p class="note" style="margin:0 0 18px">
+      콘솔 메뉴가 <b>Google Auth Platform</b> 으로 바뀌었습니다. 메뉴를 찾아 들어가는 것보다
+      아래 주소를 바로 여는 편이 빠릅니다. 어느 단계든 <b>화면 맨 위 프로젝트 이름</b>이
+      YouTube API 키를 만들 때 쓴 프로젝트인지 먼저 확인하세요.
+    </p>
 
     <ol class="steps">
       <li class="step">
         <input class="check" type="checkbox" id="c4">
         <div class="step-body">
-          <p>
-            <b>OAuth 동의 화면</b>을 설정합니다. User Type은 <b>외부</b>, 앱 이름은
-            <code>헬스 쇼츠</code> 정도면 됩니다.
-          </p>
+          <p><b>동의 화면을 만듭니다.</b> 이 주소를 엽니다.</p>
+          <div class="code">
+            <code>https://console.cloud.google.com/auth/overview</code>
+            <button class="copy" type="button">복사</button>
+          </div>
           <p class="note">
-            게시 상태는 <b>테스트</b>로 둬도 됩니다. 그 경우 <b>테스트 사용자</b>에 본인 구글 계정을
-            반드시 추가하세요. 안 하면 본인 계정으로도 로그인이 거부됩니다.
+            <b>시작하기</b>(Get started) 버튼이 보이면 누르고, 순서대로 채웁니다.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>칸</th><th>넣을 값</th></tr></thead>
+              <tbody>
+                <tr><td>앱 이름</td><td><code>헬스 쇼츠</code></td></tr>
+                <tr><td>사용자 지원 이메일</td><td>본인 이메일 선택</td></tr>
+                <tr><td>대상 (Audience)</td><td><b>외부</b> (External)</td></tr>
+                <tr><td>연락처 정보</td><td>본인 이메일 입력</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">
+            이미 만들어 둔 동의 화면이 있으면 이 단계는 건너뜁니다.
           </p>
         </div>
       </li>
@@ -465,9 +485,18 @@
       <li class="step">
         <input class="check" type="checkbox" id="c5">
         <div class="step-body">
-          <p>
-            <b>사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID</b>,
-            유형은 <b>웹 애플리케이션</b>.
+          <p><b>본인 계정을 테스트 사용자로 추가합니다.</b></p>
+          <div class="code">
+            <code>https://console.cloud.google.com/auth/audience</code>
+            <button class="copy" type="button">복사</button>
+          </div>
+          <p class="note">
+            게시 상태가 <b>테스트</b>면 여기 등록된 계정만 로그인할 수 있습니다.
+            <b>테스트 사용자</b> 항목의 <b>+ Add users</b> 를 눌러 본인 구글 이메일을 넣고 저장하세요.
+          </p>
+          <p class="note">
+            <b>이걸 빠뜨리면 본인 계정으로도 로그인이 거부됩니다.</b> 가장 흔한 막힘입니다.
+            (상태가 이미 <b>프로덕션</b>이면 테스트 사용자는 필요 없습니다.)
           </p>
         </div>
       </li>
@@ -475,14 +504,45 @@
       <li class="step">
         <input class="check" type="checkbox" id="c6">
         <div class="step-body">
-          <p><b>승인된 리디렉션 URI</b> 에 이것을 넣습니다. <code>&lt;project&gt;</code> 자리에 본인 Supabase 프로젝트 ref를 넣으세요.</p>
+          <p><b>OAuth 클라이언트를 만듭니다.</b> 이 주소를 엽니다.</p>
           <div class="code">
-            <code>https://&lt;project&gt;.supabase.co/auth/v1/callback</code>
+            <code>https://console.cloud.google.com/auth/clients/create</code>
             <button class="copy" type="button">복사</button>
           </div>
           <p class="note">
-            여기는 <b>우리 앱 주소가 아니라 Supabase 주소</b>입니다. 구글은 Supabase로 돌려보내고,
-            Supabase가 다시 우리 앱으로 돌려보냅니다.
+            <b>애플리케이션 유형</b>은 <b>웹 애플리케이션</b>, 이름은 아무거나 (예: <code>헬스 쇼츠 웹</code>).
+          </p>
+
+          <p style="margin-top:14px"><b>칸 두 개</b>를 채웁니다. 서로 다른 주소가 들어갑니다.</p>
+
+          <div class="dir">
+            <div class="dir-row">
+              <span class="dir-from">승인된 JavaScript 원본 → + URI 추가</span>
+              <span class="dir-what">우리 앱 주소 (포트까지, 끝에 슬래시 없이)</span>
+              <span class="dir-val">http://localhost:3000</span>
+            </div>
+            <div class="dir-row">
+              <span class="dir-from">승인된 리디렉션 URI → + URI 추가</span>
+              <span class="dir-what">Supabase 주소 (우리 앱 아님)</span>
+              <span class="dir-val">https://daoobwoyorylbkbhuntp.supabase.co/auth/v1/callback</span>
+            </div>
+          </div>
+
+          <div class="code" style="margin-top:12px">
+            <code>http://localhost:3000</code>
+            <button class="copy" type="button">복사</button>
+          </div>
+          <div class="code">
+            <code>https://daoobwoyorylbkbhuntp.supabase.co/auth/v1/callback</code>
+            <button class="copy" type="button">복사</button>
+          </div>
+
+          <p class="note">
+            리디렉션 URI 가 한 글자라도 다르면 로그인 버튼을 눌렀을 때 구글이
+            <code>redirect_uri_mismatch</code> 를 띄웁니다. 위 값을 그대로 복사해 쓰세요.
+          </p>
+          <p class="note">
+            다 채웠으면 <b>만들기</b>(Create).
           </p>
         </div>
       </li>
@@ -490,7 +550,20 @@
       <li class="step">
         <input class="check" type="checkbox" id="c7">
         <div class="step-body">
-          <p>만들어진 <b>클라이언트 ID</b>와 <b>클라이언트 보안 비밀번호</b>를 복사해 둡니다.</p>
+          <p><b>클라이언트 ID와 보안 비밀번호를 받습니다.</b></p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>값</th><th>생김새</th></tr></thead>
+              <tbody>
+                <tr><td>클라이언트 ID</td><td><code>…apps.googleusercontent.com</code> 으로 끝남</td></tr>
+                <tr><td>클라이언트 보안 비밀번호</td><td><code>GOCSPX-</code> 로 시작</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">
+            창을 닫았어도 괜찮습니다 — <code>console.cloud.google.com/auth/clients</code> 에서
+            해당 클라이언트를 누르면 다시 볼 수 있습니다.
+          </p>
         </div>
       </li>
     </ol>

@@ -202,12 +202,12 @@ test('부위 칩을 누르면 세부 근육이 펼쳐지고 새로고침해도 �
   await expect(page.getByRole('link', { name: '광배근' })).toBeVisible()
 })
 
-test('내 정보 화면은 Supabase 없이도 동작한다', async ({ page }) => {
+test('설정 화면은 Supabase 없이도 동작한다', async ({ page }) => {
   // E2E 환경에는 NEXT_PUBLIC_SUPABASE_* 가 빈 값이다 (playwright.config.ts).
   // 그 상태에서 화면이 깨지지 않고 이유를 알려주는지 본다.
   await page.goto('/account')
 
-  await expect(page.getByRole('heading', { name: '내 정보' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '설정' })).toBeVisible()
   await expect(page.getByTestId('sign-in')).toBeDisabled()
   await expect(page.getByText('Supabase 설정이 없어')).toBeVisible()
 })
@@ -217,7 +217,7 @@ test('로그인 실패는 에러 화면 대신 안내로 끝난다', async ({ pa
 
   await expect(page.getByTestId('account-notice')).toBeVisible()
   // 앱이 죽지 않고 화면이 그대로 있어야 한다.
-  await expect(page.getByRole('heading', { name: '내 정보' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '설정' })).toBeVisible()
 })
 
 test('OAuth 콜백이 외부 주소로 보내지 않는다', async ({ page }) => {
@@ -225,4 +225,36 @@ test('OAuth 콜백이 외부 주소로 보내지 않는다', async ({ page }) =>
   await page.goto('/auth/callback?next=https://example.com')
 
   await expect(page).toHaveURL(/\/account\?auth=failed/)
+})
+
+test('탭바에서 설정으로 들어가 로그인 화면에 닿는다', async ({ page }) => {
+  // 진입점이 없으면 로그인 기능이 있어도 쓸 수가 없다.
+  await page.goto('/')
+
+  await page.getByRole('link', { name: '설정' }).click()
+
+  await expect(page).toHaveURL(/\/account/)
+  await expect(page.getByRole('heading', { name: '설정' })).toBeVisible()
+  await expect(page.getByTestId('sign-in')).toBeVisible()
+})
+
+test('영상을 보면서 루틴에 담을 수 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').first().click()
+  await expect(page).toHaveURL(/\/feed/)
+
+  // 현재 슬라이드의 담기 버튼. 마운트 윈도우(±1) 때문에 여러 개가 존재한다.
+  const slide = page.getByTestId('feed-slide').first()
+  await slide.getByTestId('add-to-routine').click()
+
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('피드에서 담은 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  // 피드를 떠나지 않는다 — 보던 자리에서 담는 것이 이 기능의 요점이다.
+  await expect(page).toHaveURL(/\/feed/)
+
+  await page.goto('/routines')
+  await expect(page.getByRole('heading', { name: '피드에서 담은 루틴' })).toBeVisible()
+  await expect(page.getByTestId('routine-item')).toHaveCount(1)
 })

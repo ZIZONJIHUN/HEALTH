@@ -4,15 +4,15 @@ import { getAccountUser } from '@/features/account/session'
 import { firstParam } from '@/features/search/searchParams'
 
 export const metadata: Metadata = {
-  title: '내 정보',
+  title: '설정',
 }
 
 /**
- * 단계 A 에서는 탭바에 넣지 않는다. 주소로만 닿는다.
+ * 탭바의 세 번째 자리.
  *
- * 로그인해도 사용자에게 달라지는 것이 없기 때문이다 — "동기화됨" 은 거짓이고
- * 아무 말도 안 하면 왜 로그인했는지 알 수 없다. 루틴 동기화(단계 B)가 끝날 때
- * TABS 에 추가해 함께 노출한다.
+ * 처음에는 루틴 동기화가 끝날 때까지 숨겨 둘 생각이었다 — 로그인해도 달라지는 것이
+ * 없어서였다. 그런데 그러면 **로그인 자체를 할 방법이 없다.** 아직 못 하는 일을
+ * 화면에서 솔직히 말하는 편이, 기능을 숨겨서 닿지 못하게 하는 것보다 낫다.
  */
 export default async function AccountPage({
   searchParams,
@@ -26,10 +26,10 @@ export default async function AccountPage({
   const user = await getAccountUser()
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
+    <div className="mx-auto max-w-2xl">
       <header>
         <h1 className="text-[26px] font-extrabold tracking-tight sm:text-3xl md:text-[32px]">
-          내 정보
+          설정
         </h1>
       </header>
 

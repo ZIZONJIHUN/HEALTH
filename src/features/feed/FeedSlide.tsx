@@ -3,6 +3,7 @@
 import { useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
+import AddToRoutineButton from '@/features/routines/AddToRoutineButton'
 import { buildEmbedUrl } from '@/features/feed/embed'
 import { useVideoEnded } from '@/features/feed/useVideoEnded'
 import type { ShortVideo } from '@/lib/types'
@@ -76,12 +77,31 @@ export default function FeedSlide({
           />
         )}
 
+        {/*
+          제목 옆에 담기 버튼을 둔다. 보면서 마음에 들면 그 자리에서 담을 수 있어야지,
+          그리드로 되돌아가 다시 찾게 하면 안 된다.
+
+          오버레이 자체는 pointer-events-none 이라 영상 조작을 막지 않는다.
+          버튼만 되살린다.
+        */}
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-4 pt-12 pb-6"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/45 to-transparent px-4 pt-12 pb-6"
           style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
         >
-          <p className="line-clamp-2 text-sm leading-snug font-semibold text-text">{video.title}</p>
-          <p className="mt-1 text-xs text-muted">{video.channelTitle}</p>
+          <div className="flex items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="line-clamp-2 text-sm leading-snug font-semibold text-text">
+                {video.title}
+              </p>
+              <p className="mt-1 text-xs text-muted">{video.channelTitle}</p>
+            </div>
+
+            <AddToRoutineButton
+              video={video}
+              placement="above"
+              className="pointer-events-auto relative shrink-0"
+            />
+          </div>
         </div>
       </div>
     </div>

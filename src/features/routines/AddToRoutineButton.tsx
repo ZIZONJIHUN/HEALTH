@@ -9,10 +9,27 @@ import type { ShortVideo } from '@/lib/types'
 /**
  * 영상을 루틴에 담는다.
  *
- * 카드 링크 바깥에 놓아야 한다. 링크 안에 넣으면 이 버튼을 눌러도 피드로 넘어간다.
- * 위치는 VideoGrid 의 li(relative) 기준 절대 배치다.
+ * 그리드에서는 카드 링크 **바깥**에 놓아야 한다. 링크 안에 넣으면 이 버튼을 눌러도
+ * 피드로 넘어간다.
+ *
+ * 두 자리에서 쓴다. 그리드 카드의 오른쪽 위, 그리고 전면 피드의 영상 제목 옆.
+ * 피드에서는 버튼이 화면 아래쪽에 있어서 메뉴가 아래로 열리면 화면 밖으로 나간다 —
+ * 그래서 여는 방향을 밖에서 정하게 했다. 담기 로직(중복 방지, 새 루틴 만들며 담기,
+ * 저장 실패 처리)은 한 벌만 두고 양쪽이 같이 쓴다.
  */
-export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
+export default function AddToRoutineButton({
+  video,
+  placement = 'below',
+  className = 'absolute top-1.5 right-1.5 z-10',
+}: {
+  video: ShortVideo
+  /** 메뉴가 열리는 방향. 버튼이 화면 아래쪽에 있으면 'above'. */
+  placement?: 'below' | 'above'
+  /** 바깥 컨테이너의 위치 지정. 기본값은 그리드 카드 기준 절대 배치다. */
+  className?: string
+}) {
+  // 메뉴와 실패 안내가 같은 방향으로 열려야 한다.
+  const openSide = placement === 'above' ? 'bottom-9' : 'top-9'
   const routines = useRoutines()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -70,7 +87,7 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
   }
 
   return (
-    <div ref={containerRef} className="absolute top-1.5 right-1.5 z-10">
+    <div ref={containerRef} className={className}>
       <button
         type="button"
         data-testid="add-to-routine"
@@ -101,7 +118,7 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
         <div
           id={menuId}
           aria-label="루틴에 담기"
-          className="absolute top-9 right-0 z-30 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-pop"
+          className={`absolute ${openSide} right-0 z-30 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-pop`}
         >
           {routines.length === 0 && !creating ? (
             <p className="px-2 py-2 text-xs leading-relaxed text-dim">
@@ -154,7 +171,7 @@ export default function AddToRoutineButton({ video }: { video: ShortVideo }) {
         <p
           role="alert"
           data-testid="add-failed"
-          className="absolute top-9 right-0 z-30 w-44 rounded-lg border border-danger/35 bg-danger/15 px-2.5 py-2 text-[11px] leading-relaxed text-text shadow-pop"
+          className={`absolute ${openSide} right-0 z-30 w-44 rounded-lg border border-danger/35 bg-danger/15 px-2.5 py-2 text-[11px] leading-relaxed text-text shadow-pop`}
         >
           저장하지 못했어요. 브라우저 저장공간이 가득 찼을 수 있어요.
         </p>

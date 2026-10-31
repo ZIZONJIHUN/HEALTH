@@ -82,6 +82,33 @@ test('뒤로가기로 그리드의 스크롤 위치가 복원된다', async ({ p
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
 })
 
+test('영상을 몇 개 넘긴 뒤에도 뒤로 버튼 한 번에 그리드로 돌아간다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').first().click()
+  await expect(page).toHaveURL(/\/feed/)
+  const before = await page.evaluate(() => history.length)
+
+  // 슬라이드가 바뀔 때 이미 뜬 iframe 의 src 를 바꾸면 iframe 안에서 내비게이션이
+  // 일어나 세션 히스토리가 쌓이고, 뒤로가 페이지 대신 iframe 을 되돌린다.
+  // 다 뜨기 전에 src 가 바뀌면 브라우저가 히스토리를 쌓지 않고 대체한다. 실제
+  // 사용자처럼 영상이 뜰 시간을 두고 넘겨야 재현된다.
+  for (const n of [2, 3, 4]) {
+    await page.waitForTimeout(2000)
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByText(`${n} / 9`)).toBeVisible()
+  }
+  await expect(page.getByTestId('feed-slide').nth(3).locator('iframe')).toHaveAttribute(
+    'src',
+    /autoplay=1/,
+  )
+  // iframe 내비게이션은 비동기로 히스토리에 반영된다. 잠깐 기다렸다 센다.
+  await page.waitForTimeout(1000)
+  expect(await page.evaluate(() => history.length)).toBe(before)
+
+  await page.getByTestId('back-button').click()
+  await expect(page).toHaveURL(/\/\?q=/)
+})
+
 test('결과가 없으면 추천 검색어를 보여준다', async ({ page }) => {
   await page.goto('/?q=없는운동')
 

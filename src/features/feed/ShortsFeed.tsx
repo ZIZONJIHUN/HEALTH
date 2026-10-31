@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import FeedSlide from '@/features/feed/FeedSlide'
+import { recordView } from '@/features/history/history'
 import { iconButtonClass } from '@/components/ui/IconButton'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
 import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
@@ -17,11 +18,14 @@ export default function ShortsFeed({
   videos,
   initialIndex,
   routineName,
+  recordViews = true,
 }: {
   videos: ShortVideo[]
   initialIndex: number
   /** 있으면 루틴 재생이다. 반복을 끄고 끝나면 다음 운동을 권한다. */
   routineName?: string
+  /** 보고 있는 영상을 "최근 본 영상"에 남길지. 최근 본 영상을 다시 볼 때만 끈다. */
+  recordViews?: boolean
 }) {
   const [activeIndex, setActiveIndex] = useState(initialIndex)
   const [endedIndex, setEndedIndex] = useState<number | null>(null)
@@ -55,6 +59,11 @@ export default function ShortsFeed({
     }
     return () => observer.disconnect()
   }, [videos.length])
+
+  const activeVideo = videos[activeIndex]
+  useEffect(() => {
+    if (recordViews && activeVideo) recordView(activeVideo)
+  }, [recordViews, activeVideo])
 
   // FeedSlide 로 내려가는 참조가 렌더마다 바뀌면 종료 감지 구독이 계속 끊겼다 붙는다.
   const handleEnded = useCallback((index: number) => setEndedIndex(index), [])

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import BackButton from '@/features/feed/BackButton'
+import RecentFeed from '@/features/history/RecentFeed'
 import RoutineFeed from '@/features/routines/RoutineFeed'
 import ShortsFeed from '@/features/feed/ShortsFeed'
 import { filterByLength, toLengthFilter } from '@/features/search/lengthFilter'
@@ -15,6 +16,7 @@ export default async function FeedPage({
     len?: string | string[]
     pages?: string | string[]
     routine?: string | string[]
+    recent?: string | string[]
   }>
 }) {
   const params = await searchParams
@@ -29,6 +31,16 @@ export default async function FeedPage({
       <main id="main">
         <BackButton />
         <RoutineFeed routineId={routineId} requestedIndex={requestedIndex} />
+      </main>
+    )
+  }
+
+  // 최근 본 영상도 localStorage 에만 있다.
+  if (firstParam(params.recent)) {
+    return (
+      <main id="main">
+        <BackButton />
+        <RecentFeed requestedIndex={requestedIndex} />
       </main>
     )
   }

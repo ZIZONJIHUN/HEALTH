@@ -285,3 +285,43 @@ test('영상을 보면서 루틴에 담을 수 있다', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '피드에서 담은 루틴' })).toBeVisible()
   await expect(page.getByTestId('routine-item')).toHaveCount(1)
 })
+
+test('검색한 운동이 홈에 최근 검색어로 남는다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await expect(page.getByTestId('video-card').first()).toBeVisible()
+  // 카드는 서버 HTML 로 먼저 보인다. 기록은 하이드레이션 뒤에 남으니 그때까지 기다린다.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('health-shorts:history:v1')))
+    .toContain('스쿼트')
+
+  await page.goto('/')
+  const recent = page.getByTestId('recent-search')
+  await expect(recent).toHaveCount(1)
+  await expect(recent).toHaveText('스쿼트')
+
+  await recent.click()
+  await expect(page).toHaveURL(/\/\?q=%EC%8A%A4%EC%BF%BC%ED%8A%B8/)
+
+  await page.goto('/')
+  await page.getByRole('button', { name: '스쿼트 검색 기록 지우기' }).click()
+  await expect(page.getByTestId('recent-search')).toHaveCount(0)
+})
+
+test('본 영상이 홈에 남고 누르면 다시 재생된다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').nth(2).click()
+  await expect(page).toHaveURL(/\/feed/)
+  await expect(page.getByText('3 / 9')).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('health-shorts:history:v1')))
+    .toContain('"videos":[{')
+
+  await page.goto('/')
+  const recent = page.getByTestId('recent-video')
+  await expect(recent).toHaveCount(1)
+
+  // 다시 틀 때 YouTube 를 부르지 않는다. 저장해 둔 메타데이터로 피드를 만든다.
+  await recent.first().click()
+  await expect(page).toHaveURL(/\/feed\?recent=1&i=0/)
+  await expect(page.getByTestId('feed-slide')).toHaveCount(1)
+})

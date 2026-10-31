@@ -2,6 +2,8 @@ import { Suspense } from 'react'
 import Link from 'next/link'
 import { BUTTON_SECONDARY } from '@/components/ui/Button'
 import BodyPanel from '@/features/body/BodyPanel'
+import RecentPanel from '@/features/history/RecentPanel'
+import RecordSearch from '@/features/history/RecordSearch'
 import EmptyState from '@/features/search/EmptyState'
 import QuotaBanner from '@/features/search/QuotaBanner'
 import ResultToolbar from '@/features/search/ResultToolbar'
@@ -71,7 +73,10 @@ export default async function ExercisePage({
             <SearchResults query={q} lengthParam={len} pages={pages} />
           </Suspense>
         ) : (
-          <SuggestPanel />
+          <>
+            <RecentPanel />
+            <SuggestPanel />
+          </>
         )}
       </div>
     </div>
@@ -99,6 +104,8 @@ async function SearchResults({
         <EmptyState query={result.query} />
       ) : (
         <>
+          {/* 결과가 없던 검색어는 남기지 않는다. 다시 눌러도 같은 빈 화면이다. */}
+          <RecordSearch query={result.query} />
           <ResultToolbar
             query={result.query}
             shown={videos.length}

@@ -34,7 +34,7 @@ import { useRoutines } from '@/features/routines/useRoutines'
 /** 실행 취소를 띄워 두는 시간. 짧으면 놓치고, 길면 화면에 계속 걸리적거린다. */
 const UNDO_WINDOW_MS = 8000
 
-type Deleted = { routine: Routine; index: number }
+type Deleted = { routine: Routine; index: number; owner: string | null }
 
 export default function RoutineList() {
   const routines = useRoutines()
@@ -61,7 +61,9 @@ export default function RoutineList() {
     <UndoBar
       name={deleted.routine.name}
       onUndo={() => {
-        restoreRoutine(deleted.routine, deleted.index)
+        // 그사이 주인이 바뀌었으면 되돌리기를 거부한다(false). 안내 없이 닫기만 한다 —
+        // 지금 화면에는 그 루틴이 원래 없던 것이다.
+        restoreRoutine(deleted.routine, deleted.index, deleted.owner)
         setDeleted(null)
       }}
       onDismiss={() => setDeleted(null)}

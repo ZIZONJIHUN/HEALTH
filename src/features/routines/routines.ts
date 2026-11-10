@@ -312,7 +312,9 @@ export function renameRoutine(id: string, name: string): boolean {
  * 확인 대화상자보다 실행 취소가 낫다 — 확인창은 매번 마찰을 주고 사람들은 곧 읽지 않고
  * 누르지만, 실행 취소는 실수했을 때만 개입한다.
  */
-export function deleteRoutine(id: string): { routine: Routine; index: number } | null {
+export function deleteRoutine(
+  id: string,
+): { routine: Routine; index: number; owner: string | null } | null {
   const visible = loadRoutines()
   const index = visible.findIndex((routine) => routine.id === id)
   if (index === -1) return null
@@ -326,16 +328,26 @@ export function deleteRoutine(id: string): { routine: Routine; index: number } |
           routine === target ? { ...routine, deletedAt: Date.now(), ...touched() } : routine,
         )
   commit(next)
-  return { routine: toRoutine(target), index }
+  return { routine: toRoutine(target), index, owner: target.owner }
 }
 
 /**
  * deleteRoutine 을 되돌린다. 있던 자리에 되돌려 놓아야 목록 순서가 흔들리지 않는다.
  * 묘비가 남아 있으면 그 자리에서 되살린다(묘비는 배열 위치를 그대로 지키고 있다).
+ *
+ * owner 는 지울 때의 주인이다. 되돌리기 안내는 몇 초 떠 있어서 그사이 로그아웃·다른
+ * 계정 로그인이 끼어들 수 있다. 주인이 다르면 거부한다(false) — 그대로 되살리면 남의
+ * 루틴이 지금 계정에 dirty 로 올라가거나, 손님 루틴이 가져오기 동의 없이 계정에 들어간다.
  */
-export function restoreRoutine(routine: Routine, index: number): boolean {
+export function restoreRoutine(
+  routine: Routine,
+  index: number,
+  owner: string | null,
+): boolean {
+  if (owner !== activeOwner) return false
   const stored = loadStoredRoutines()
   const existing = stored.findIndex((item) => item.id === routine.id)
+  if (existing !== -1 && stored[existing].owner !== activeOwner) return false
   const revived: StoredRoutine = {
     id: routine.id,
     name: clampName(routine.name),

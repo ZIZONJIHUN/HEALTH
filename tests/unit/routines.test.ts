@@ -173,7 +173,7 @@ describe('루틴 저장소', () => {
     expect(deleted).not.toBeNull()
     expect(loadRoutines().map((r) => r.name)).toEqual(['가슴', '하체'])
 
-    restoreRoutine(deleted!.routine, deleted!.index)
+    restoreRoutine(deleted!.routine, deleted!.index, deleted!.owner)
     // 끝에 붙이면 목록 순서가 흔들린다. 있던 자리로 돌아와야 한다.
     expect(loadRoutines().map((r) => r.name)).toEqual(['가슴', '등', '하체'])
   })
@@ -188,8 +188,8 @@ describe('루틴 저장소', () => {
     const routine = createRoutine('가슴')!
     const deleted = deleteRoutine(routine.id)!
 
-    restoreRoutine(deleted.routine, deleted.index)
-    restoreRoutine(deleted.routine, deleted.index)
+    restoreRoutine(deleted.routine, deleted.index, deleted.owner)
+    restoreRoutine(deleted.routine, deleted.index, deleted.owner)
 
     expect(loadRoutines()).toHaveLength(1)
   })
@@ -306,10 +306,60 @@ describe('루틴 저장소', () => {
     const deleted = m.deleteRoutine(r.id)!
     expect(m.loadRoutines()).toEqual([])
     expect(m.loadStoredRoutines()[0].deletedAt).not.toBeNull()
-    m.restoreRoutine(deleted.routine, deleted.index)
+    m.restoreRoutine(deleted.routine, deleted.index, deleted.owner)
     expect(m.loadStoredRoutines()).toHaveLength(1)
     expect(m.loadStoredRoutines()[0]).toMatchObject({ deletedAt: null, dirty: true, owner: 'u1' })
     expect(m.loadRoutines().map((x) => x.name)).toEqual(['가슴'])
+  })
+
+  it('지울 때의 주인을 함께 돌려준다', async () => {
+    const m = await freshModule()
+    m.setActiveOwner('u1')
+    const r = m.createRoutine('가슴')!
+    expect(m.deleteRoutine(r.id)).toMatchObject({ index: 0, owner: 'u1' })
+  })
+
+  it('지운 뒤 다른 계정으로 바뀌면 되돌리지 않는다', async () => {
+    // A 가 지우고 로그아웃, B 가 로그인한 뒤 되돌리기를 누른 경우. 그대로 되살리면
+    // A 의 루틴이 B 의 것으로 dirty 가 되어 B 계정에 올라간다.
+    const m = await freshModule()
+    m.setActiveOwner('a')
+    const r = m.createRoutine('A 의 루틴')!
+    const deleted = m.deleteRoutine(r.id)!
+    m.setActiveOwner(null)
+    m.setActiveOwner('b')
+    const before = m.loadStoredRoutines()
+
+    expect(m.restoreRoutine(deleted.routine, deleted.index, deleted.owner)).toBe(false)
+    expect(m.loadStoredRoutines()).toBe(before)
+    expect(m.loadStoredRoutines()[0]).toMatchObject({ owner: 'a' })
+    expect(m.loadStoredRoutines()[0].deletedAt).not.toBeNull()
+    expect(m.loadRoutines()).toEqual([])
+  })
+
+  it('비로그인으로 지운 뒤 로그인하면 되돌리지 않는다', async () => {
+    // 손님 루틴이 가져오기 동의 없이 계정에 들어가면 안 된다.
+    const m = await freshModule()
+    const r = m.createRoutine('손님 루틴')!
+    const deleted = m.deleteRoutine(r.id)!
+    m.setActiveOwner('u1')
+
+    expect(m.restoreRoutine(deleted.routine, deleted.index, deleted.owner)).toBe(false)
+    expect(m.loadStoredRoutines()).toEqual([])
+    expect(m.loadRoutines()).toEqual([])
+  })
+
+  it('주인이 다른 묘비는 넘겨받은 주인이 맞아도 되살리지 않는다', async () => {
+    const m = await freshModule()
+    m.setActiveOwner('a')
+    const r = m.createRoutine('A 의 루틴')!
+    const deleted = m.deleteRoutine(r.id)!
+    m.setActiveOwner('b')
+
+    expect(m.restoreRoutine(deleted.routine, deleted.index, 'b')).toBe(false)
+    expect(m.loadStoredRoutines()).toHaveLength(1)
+    expect(m.loadStoredRoutines()[0]).toMatchObject({ owner: 'a', dirty: true })
+    expect(m.loadStoredRoutines()[0].deletedAt).not.toBeNull()
   })
 
   it('비로그인 루틴을 지우면 배열에서 빠진다', async () => {

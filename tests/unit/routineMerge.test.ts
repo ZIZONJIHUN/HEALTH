@@ -1,0 +1,158 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StoredRoutine } from '@/features/routines/routines'
+import {
+  adoptGuestRoutines,
+  classifySessionChange,
+  cleanupAfterSignOut,
+  mergeRoutines,
+} from '@/features/routines/merge'
+
+function make(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
+  return {
+    id,
+    name: `루틴 ${id}`,
+    createdAt: 1,
+    items: [],
+    updatedAt: 10,
+    deletedAt: null,
+    owner: 'u1',
+    dirty: false,
+    syncError: null,
+    ...over,
+  }
+}
+
+describe('mergeRoutines', () => {
+  it('나중에 고친 쪽이 이긴다', () => {
+    const local = [make('a', { name: '로컬', updatedAt: 10, dirty: true })]
+    const remote = [make('a', { name: '서버', updatedAt: 20 })]
+    const [merged] = mergeRoutines(local, remote, 'u1')
+    expect(merged.name).toBe('서버')
+    expect(merged.dirty).toBe(false)
+    expect(merged.owner).toBe('u1')
+    expect(merged.syncError).toBeNull()
+  })
+
+  it('updatedAt 이 같으면 remote 가 이긴다', () => {
+    const local = [make('a', { name: '로컬', updatedAt: 20 })]
+    const remote = [make('a', { name: '서버', updatedAt: 20 })]
+    expect(mergeRoutines(local, remote, 'u1')[0].name).toBe('서버')
+  })
+
+  it('로컬이 이기면 dirty 로 표시한다', () => {
+    const local = [make('a', { name: '로컬', updatedAt: 30, syncError: 'x' })]
+    const remote = [make('a', { name: '서버', updatedAt: 20 })]
+    const [merged] = mergeRoutines(local, remote, 'u1')
+    expect(merged.name).toBe('로컬')
+    expect(merged.dirty).toBe(true)
+    expect(merged.syncError).toBe('x')
+  })
+
+  it('이긴 로컬이 remote 와 같으면 dirty 가 아니다', () => {
+    const local = [make('a', { updatedAt: 30 })]
+    const remote = [make('a', { updatedAt: 20 })]
+    // updatedAt 만 다르면 "다르다" — 서버에 올려 맞춰야 한다.
+    expect(mergeRoutines(local, remote, 'u1')[0].dirty).toBe(true)
+    const same = mergeRoutines([make('a', { updatedAt: 30 })], [make('a', { updatedAt: 30 })], 'u1')
+    expect(same[0].dirty).toBe(false)
+  })
+
+  it('지운 것이 나중이면 지워지고, 고친 것이 나중이면 되살아난다', () => {
+    const tomb = make('a', { deletedAt: 25, updatedAt: 25 })
+    const live = make('a', { name: '살아있음', updatedAt: 30 })
+    const older = make('a', { updatedAt: 20 })
+
+    const deleted = mergeRoutines([older], [tomb], 'u1')[0]
+    expect(deleted.deletedAt).toBe(25)
+
+    const revived = mergeRoutines([live], [tomb], 'u1')[0]
+    expect(revived.deletedAt).toBeNull()
+    expect(revived.dirty).toBe(true)
+
+    const localTomb = mergeRoutines([tomb], [older], 'u1')[0]
+    expect(localTomb.deletedAt).toBe(25)
+    expect(localTomb.dirty).toBe(true)
+  })
+
+  it('한쪽에만 있는 루틴은 남는다', () => {
+    const local = [make('l', { updatedAt: 5 })]
+    const remote = [make('r', { createdAt: 3, owner: null, dirty: true, syncError: 'e' })]
+    const merged = mergeRoutines(local, remote, 'u1')
+    expect(merged.map((r) => r.id)).toEqual(['l', 'r'])
+    expect(merged[0].dirty).toBe(true) // 서버에 없는 로컬 루틴은 올려야 한다
+    expect(merged[1]).toMatchObject({ owner: 'u1', dirty: false, syncError: null })
+  })
+
+  it('다른 주인의 로컬 루틴은 건드리지 않는다', () => {
+    const guest = make('g', { owner: null, dirty: false })
+    const other = make('o', { owner: 'u2', dirty: true })
+    const remote = [make('g', { name: '서버', updatedAt: 99 })]
+    const merged = mergeRoutines([guest, other], remote, 'u1')
+    expect(merged).toContainEqual(guest)
+    expect(merged).toContainEqual(other)
+  })
+
+  it('순서는 로컬 순서를 유지하고 remote 전용은 createdAt 순으로 뒤에 붙인다', () => {
+    const local = [make('b'), make('a')]
+    const remote = [make('z', { createdAt: 9 }), make('y', { createdAt: 2 }), make('a')]
+    expect(mergeRoutines(local, remote, 'u1').map((r) => r.id)).toEqual(['b', 'a', 'y', 'z'])
+  })
+
+  it('입력을 바꾸지 않는다', () => {
+    const local = [make('a', { updatedAt: 30 })]
+    const remote = [make('a', { updatedAt: 20 })]
+    const l = structuredClone(local)
+    const r = structuredClone(remote)
+    mergeRoutines(local, remote, 'u1')
+    expect(local).toEqual(l)
+    expect(remote).toEqual(r)
+  })
+})
+
+describe('adoptGuestRoutines', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1000)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('손님 루틴을 가져오면 내 것이 되고 dirty 다', () => {
+    const guest = make('g', { owner: null, updatedAt: 5 })
+    const tomb = make('t', { owner: null, deletedAt: 3 })
+    const other = make('o', { owner: 'u2' })
+    const result = adoptGuestRoutines([guest, tomb, other], 'u1')
+    expect(result.map((r) => r.id)).toEqual(['g', 'o'])
+    expect(result[0]).toMatchObject({ owner: 'u1', dirty: true, updatedAt: 1000 })
+    expect(result[1]).toEqual(other)
+    expect(guest.owner).toBeNull()
+  })
+})
+
+describe('cleanupAfterSignOut', () => {
+  it('로그아웃하면 반영된 것만 지우고 못 민 것은 남긴다', () => {
+    const synced = make('s')
+    const syncedTomb = make('t', { deletedAt: 5 })
+    const pending = make('p', { dirty: true })
+    const other = make('o', { owner: 'u2' })
+    const guest = make('g', { owner: null })
+    expect(cleanupAfterSignOut([synced, syncedTomb, pending, other, guest], 'u1')).toEqual([
+      pending,
+      other,
+      guest,
+    ])
+  })
+})
+
+describe('classifySessionChange', () => {
+  it('세션 변화를 구분한다', () => {
+    expect(classifySessionChange(null, null)).toEqual({ kind: 'none' })
+    expect(classifySessionChange(null, 'u1')).toEqual({ kind: 'signed-in', userId: 'u1' })
+    expect(classifySessionChange('u1', null)).toEqual({ kind: 'signed-out', previous: 'u1' })
+    expect(classifySessionChange('u1', 'u2')).toEqual({
+      kind: 'switched',
+      previous: 'u1',
+      userId: 'u2',
+    })
+    expect(classifySessionChange('u1', 'u1')).toEqual({ kind: 'none' })
+  })
+})

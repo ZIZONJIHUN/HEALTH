@@ -21,6 +21,7 @@ import { formatDuration } from '@/lib/duration'
 import { particle } from '@/lib/korean'
 import {
   deleteRoutine,
+  LIMITS,
   moveVideoInRoutine,
   removeVideoFromRoutine,
   renameRoutine,
@@ -204,6 +205,7 @@ function RoutineCard({
                 }
               }}
               aria-label="루틴 이름"
+              maxLength={LIMITS.nameLength}
               className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface2 px-3 text-sm text-text focus:border-accent-dim focus:outline-none"
             />
             <button

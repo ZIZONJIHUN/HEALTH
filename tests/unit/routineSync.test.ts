@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { StoredRoutine } from '@/features/routines/routines'
-import { classifyPushError, fetchRoutines, pushRoutine } from '@/features/routines/routineSync'
+import type { WorkoutLog } from '@/features/workouts/workouts'
+import {
+  classifyPushError,
+  fetchRoutines,
+  fetchWorkouts,
+  pushRoutine,
+  pushWorkout,
+} from '@/features/routines/routineSync'
 
 /** from().select().eq().order() 와 from().upsert() 체인만 흉내 낸다. */
 function fakeClient(opts: {
@@ -218,5 +225,127 @@ describe('classifyPushError', () => {
       kind: 'rejected',
       reason: '루틴 이름은 60자까지 쓸 수 있어요',
     })
+  })
+})
+
+/** from().select().eq().order() 와 from().insert() 체인만 흉내 낸다. */
+function fakeLogClient(opts: {
+  rows?: unknown[]
+  selectError?: { code?: string; message: string } | null
+  insertError?: { code?: string; message: string } | null
+  insertThrows?: Error
+}) {
+  const order = vi.fn(async () => ({ data: opts.rows ?? [], error: opts.selectError ?? null }))
+  const eq = vi.fn(() => ({ order }))
+  const select = vi.fn(() => ({ eq }))
+  const insert = vi.fn(async () => {
+    if (opts.insertThrows) throw opts.insertThrows
+    return { data: null, error: opts.insertError ?? null }
+  })
+  const from = vi.fn(() => ({ select, insert }))
+  return { client: { from } as unknown as SupabaseClient, from, select, eq, order, insert }
+}
+
+function makeLog(over: Partial<WorkoutLog> = {}): WorkoutLog {
+  return {
+    id: 'w1',
+    routineId: 'r1',
+    routineName: '하체',
+    completedAt: Date.parse('2026-11-12T14:30:00.000Z'),
+    localDate: '2026-11-12',
+    owner: 'u1',
+    dirty: true,
+    ...over,
+  }
+}
+
+describe('fetchWorkouts', () => {
+  it('행을 WorkoutLog 로 바꾼다', async () => {
+    const { client, from, eq, order } = fakeLogClient({
+      rows: [
+        {
+          id: 'w1',
+          routine_id: 'r1',
+          routine_name: '하체',
+          completed_at: '2026-11-12T14:30:00+00:00',
+          local_date: '2026-11-12',
+        },
+      ],
+    })
+
+    const logs = await fetchWorkouts(client, 'u1')
+
+    expect(from).toHaveBeenCalledWith('workout_logs')
+    expect(eq).toHaveBeenCalledWith('user_id', 'u1')
+    expect(order).toHaveBeenCalledWith('completed_at', { ascending: true })
+    expect(logs).toEqual([makeLog({ dirty: false })])
+  })
+
+  it('조회 오류는 던진다', async () => {
+    const { client } = fakeLogClient({ selectError: { code: '42P01', message: 'missing' } })
+    await expect(fetchWorkouts(client, 'u1')).rejects.toThrow('missing')
+  })
+})
+
+describe('pushWorkout', () => {
+  it('insert 에 user_id 와 현지 날짜를 싣는다', async () => {
+    const { client, from, insert } = fakeLogClient({})
+    expect(await pushWorkout(client, 'u1', makeLog())).toEqual({ ok: true })
+    expect(from).toHaveBeenCalledWith('workout_logs')
+    expect(insert).toHaveBeenCalledWith({
+      user_id: 'u1',
+      id: 'w1',
+      routine_id: 'r1',
+      routine_name: '하체',
+      completed_at: '2026-11-12T14:30:00.000Z',
+      local_date: '2026-11-12',
+    })
+  })
+
+  it('이미 올라간 기록(23505)은 성공으로 본다', async () => {
+    const { client } = fakeLogClient({
+      insertError: { code: '23505', message: 'duplicate key value violates unique constraint' },
+    })
+    expect(await pushWorkout(client, 'u1', makeLog())).toEqual({ ok: true })
+  })
+
+  it('하루 상한 트리거는 rejected 다', async () => {
+    const { client } = fakeLogClient({
+      insertError: { code: 'P0001', message: '운동 기록은 하루 20건까지 저장할 수 있어요' },
+    })
+    expect(await pushWorkout(client, 'u1', makeLog())).toEqual({
+      ok: false,
+      kind: 'rejected',
+      reason: '운동 기록은 하루 20건까지 저장할 수 있어요',
+    })
+  })
+
+  it('네트워크 예외는 transient 다', async () => {
+    const { client } = fakeLogClient({ insertThrows: new TypeError('Failed to fetch') })
+    expect(await pushWorkout(client, 'u1', makeLog())).toEqual({ ok: false, kind: 'transient' })
+  })
+})
+
+describe('classifyPushError — 운동 기록 제약', () => {
+  it('운동 기록 제약은 루틴 이유로 읽지 않는다', () => {
+    // 'workout_logs_routine_name_check' 에도 'name' 이 들어 있다 — 루틴 이름 탓으로 돌리면 안 된다.
+    expect(
+      classifyPushError({
+        code: '23514',
+        message:
+          'new row for relation "workout_logs" violates check constraint "workout_logs_routine_name_check"',
+      }),
+    ).toEqual({
+      ok: false,
+      kind: 'rejected',
+      reason: '운동 기록의 루틴 이름이 너무 길어 저장할 수 없어요',
+    })
+    expect(
+      classifyPushError({
+        code: '23514',
+        message:
+          'new row for relation "workout_logs" violates check constraint "workout_logs_routine_id_check"',
+      }),
+    ).toEqual({ ok: false, kind: 'rejected', reason: '서버가 이 운동 기록을 받아들이지 않았어요' })
   })
 })

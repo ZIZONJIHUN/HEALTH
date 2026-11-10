@@ -228,11 +228,25 @@ export function subscribeRoutines(listener: () => void): () => void {
   }
 }
 
+const ownerListeners = new Set<() => void>()
+
+/**
+ * 주인이 바뀔 때만 알림을 받는다. 운동 기록처럼 주인 기준으로 거르는 다른 저장소가 쓴다 —
+ * 주인은 여기 하나에만 두어야 루틴과 기록이 서로 다른 계정을 보여 주는 일이 없다.
+ */
+export function onActiveOwnerChange(listener: () => void): () => void {
+  ownerListeners.add(listener)
+  return () => {
+    ownerListeners.delete(listener)
+  }
+}
+
 /** 화면의 주인을 바꾼다. 보이는 목록이 통째로 바뀌므로 구독자에게 알린다. */
 export function setActiveOwner(userId: string | null): void {
   if (userId === activeOwner) return
   activeOwner = userId
   notify()
+  for (const listener of ownerListeners) listener()
 }
 
 export function getActiveOwner(): string | null {

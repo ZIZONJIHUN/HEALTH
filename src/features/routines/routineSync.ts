@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { WorkoutLog } from '@/features/workouts/workouts'
 import { LIMITS, type RoutineItem, type StoredRoutine } from './routines'
 
 /**
@@ -35,6 +36,8 @@ const REASON = {
   name: `루틴 이름은 ${LIMITS.nameLength}자까지 쓸 수 있어요`,
   itemsSize: '루틴에 담긴 운동 정보가 너무 커서 저장할 수 없어요',
   other: '서버가 이 루틴의 내용을 받아들이지 않았어요',
+  workoutName: '운동 기록의 루틴 이름이 너무 길어 저장할 수 없어요',
+  workoutOther: '서버가 이 운동 기록을 받아들이지 않았어요',
 } as const
 
 /** timestamptz 는 ISO 문자열로 온다. 못 읽으면 0 — 병합에서 가장 오래된 쪽으로 진다. */
@@ -131,6 +134,15 @@ export function classifyPushError(error: { code?: string; message: string } | nu
       // 트리거의 raise 문구는 이미 사람이 읽을 한국어다. 비어 있을 때만 대신 채운다.
       return { ok: false, kind: 'rejected', reason: error.message || REASON.routines }
     case '23514':
+      // 운동 기록 제약을 먼저 가린다 — 'workout_logs_routine_name_check' 에도 'name' 이 들어 있어
+      // 아래 루틴 규칙에 그대로 흘려보내면 "루틴 이름은 60자까지" 로 잘못 읽힌다.
+      if (error.message.includes('workout_logs')) {
+        return {
+          ok: false,
+          kind: 'rejected',
+          reason: error.message.includes('routine_name') ? REASON.workoutName : REASON.workoutOther,
+        }
+      }
       // check 제약 이름(routines_items_check / routines_items_size_check / routines_name_check)으로 어느 상한인지 가린다.
       // id 길이처럼 사용자가 볼 일 없는 제약은 뭉뚱그린다 — 이름 탓으로 돌리면 엉뚱한 걸 고치게 된다.
       // items_size 를 먼저 본다 — 'items' 도 들어 있어 순서를 바꾸면 개수 초과로 잘못 읽힌다.
@@ -144,5 +156,68 @@ export function classifyPushError(error: { code?: string; message: string } | nu
       return { ok: false, kind: 'rejected', reason: REASON.name }
     default:
       return { ok: false, kind: 'transient' }
+  }
+}
+
+type WorkoutRow = {
+  id: string
+  routine_id: string
+  routine_name: string
+  completed_at: string
+  local_date: string
+}
+
+const WORKOUT_COLUMNS = 'id,routine_id,routine_name,completed_at,local_date'
+
+/**
+ * 이 사용자의 운동 기록을 전부 읽는다. 루틴과 같은 이유로 RLS 에 더해 user_id 조건을 직접 건다.
+ * local_date 는 date 열이라 'YYYY-MM-DD' 로 온다 — 그대로 쓴다. completed_at 에서 다시 계산하면
+ * 이 기기의 시간대로 잘려 기록한 기기가 정한 날짜와 달라질 수 있다.
+ */
+export async function fetchWorkouts(
+  client: SupabaseClient,
+  userId: string,
+): Promise<WorkoutLog[]> {
+  const { data, error } = await client
+    .from('workout_logs')
+    .select(WORKOUT_COLUMNS)
+    .eq('user_id', userId)
+    .order('completed_at', { ascending: true })
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as WorkoutRow[]).map((row) => ({
+    id: row.id,
+    routineId: row.routine_id,
+    routineName: row.routine_name,
+    completedAt: toMs(row.completed_at),
+    localDate: row.local_date,
+    owner: userId,
+    dirty: false,
+  }))
+}
+
+/**
+ * 기록 하나를 올린다. 기록은 고치지 않으므로 upsert 가 아니라 insert 다(update 정책도 없다).
+ *
+ * 23505(기본키 중복)는 성공으로 본다 — 앞선 요청이 서버에 닿고 응답만 잃은 경우라, 이미 올라가
+ * 있는 것이다. 이걸 실패로 두면 같은 기록을 영원히 다시 보낸다.
+ */
+export async function pushWorkout(
+  client: SupabaseClient,
+  userId: string,
+  log: WorkoutLog,
+): Promise<PushResult> {
+  try {
+    const { error } = await client.from('workout_logs').insert({
+      user_id: userId,
+      id: log.id,
+      routine_id: log.routineId,
+      routine_name: log.routineName,
+      completed_at: toIso(log.completedAt),
+      local_date: log.localDate,
+    })
+    if (error?.code === '23505') return { ok: true }
+    return classifyPushError(error)
+  } catch {
+    return { ok: false, kind: 'transient' }
   }
 }

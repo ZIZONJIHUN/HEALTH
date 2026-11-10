@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoredRoutine } from '@/features/routines/routines'
+import type { WorkoutLog } from '@/features/workouts/workouts'
 import {
   adoptGuestRoutines,
+  adoptGuestWorkouts,
   classifySessionChange,
   cleanupAfterSignOut,
+  cleanupWorkoutsAfterSignOut,
   mergeRoutines,
+  mergeWorkouts,
 } from '@/features/routines/merge'
 
 function make(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
@@ -154,5 +158,73 @@ describe('classifySessionChange', () => {
       userId: 'u2',
     })
     expect(classifySessionChange('u1', 'u1')).toEqual({ kind: 'none' })
+  })
+})
+
+function log(id: string, over: Partial<WorkoutLog> = {}): WorkoutLog {
+  return {
+    id,
+    routineId: 'r1',
+    routineName: '하체',
+    completedAt: 10,
+    localDate: '2026-11-12',
+    owner: 'u1',
+    dirty: false,
+    ...over,
+  }
+}
+
+describe('mergeWorkouts', () => {
+  it('id 합집합이다 — 서버에만 있는 기록은 뒤에 completedAt 순으로 붙는다', () => {
+    const local = [log('a', { dirty: true })]
+    const remote = [log('c', { completedAt: 30 }), log('a'), log('b', { completedAt: 20 })]
+    const merged = mergeWorkouts(local, remote, 'u1')
+    expect(merged.map((item) => item.id)).toEqual(['a', 'b', 'c'])
+    expect(merged.every((item) => item.owner === 'u1' && !item.dirty)).toBe(true)
+  })
+
+  it('서버에 없는 로컬 기록은 dirty 로 남긴다', () => {
+    const merged = mergeWorkouts([log('a')], [], 'u1')
+    expect(merged).toEqual([log('a', { dirty: true })])
+  })
+
+  it('다른 주인과 손님 기록은 건드리지 않는다', () => {
+    const other = log('x', { owner: 'u2' })
+    const guest = log('g', { owner: null })
+    const merged = mergeWorkouts([other, guest], [log('x'), log('g')], 'u1')
+    // 서버의 x·g 는 u1 의 것이므로 따로 붙는다 — 로컬의 남의 기록과 섞이지 않는다.
+    expect(merged.slice(0, 2)).toEqual([other, guest])
+    expect(merged.slice(2).map((item) => item.owner)).toEqual(['u1', 'u1'])
+  })
+
+  it('입력을 바꾸지 않는다', () => {
+    const local = [log('a')]
+    mergeWorkouts(local, [], 'u1')
+    expect(local[0].dirty).toBe(false)
+  })
+})
+
+describe('adoptGuestWorkouts', () => {
+  it('손님 기록을 이 계정의 dirty 기록으로 바꾸고 남의 것은 둔다', () => {
+    const guest = log('g', { owner: null })
+    const other = log('x', { owner: 'u2' })
+    expect(adoptGuestWorkouts([guest, other], 'u1')).toEqual([
+      log('g', { owner: 'u1', dirty: true }),
+      other,
+    ])
+  })
+})
+
+describe('cleanupWorkoutsAfterSignOut', () => {
+  it('그 계정의 올린 기록만 지우고 못 올린 기록은 남긴다', () => {
+    const synced = log('a')
+    const pending = log('b', { dirty: true })
+    const other = log('x', { owner: 'u2' })
+    const guest = log('g', { owner: null })
+    expect(cleanupWorkoutsAfterSignOut([synced, pending, other, guest], 'u1')).toEqual([
+      pending,
+      other,
+      guest,
+    ])
   })
 })

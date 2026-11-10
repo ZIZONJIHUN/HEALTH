@@ -1,3 +1,4 @@
+import type { WorkoutLog } from '@/features/workouts/workouts'
 import type { StoredRoutine } from './routines'
 
 /**
@@ -75,6 +76,50 @@ export function adoptGuestRoutines(local: StoredRoutine[], owner: string): Store
  */
 export function cleanupAfterSignOut(local: StoredRoutine[], owner: string): StoredRoutine[] {
   return local.filter((routine) => routine.owner !== owner || routine.dirty)
+}
+
+/**
+ * `owner` 의 로컬 기록과 서버 기록을 id 로 합친다. 기록은 추가만 되므로 같은 id 는 같은
+ * 내용이다 — 겨룰 것이 없고 서버 사본을 쓰면 된다.
+ *
+ * - 서버에 없는 로컬 기록은 dirty 로 남겨 다음 동기화가 올리게 한다.
+ * - 다른 주인(손님 포함)의 로컬 기록은 이 계정의 일이 아니므로 그대로 둔다.
+ * - 순서는 로컬을 유지하고, 서버에만 있는 것은 completedAt 순으로 뒤에 붙인다.
+ */
+export function mergeWorkouts(
+  local: WorkoutLog[],
+  remote: WorkoutLog[],
+  owner: string,
+): WorkoutLog[] {
+  const remoteById = new Map(remote.map((log) => [log.id, log]))
+  const seen = new Set<string>()
+
+  const merged = local.map((mine) => {
+    if (mine.owner !== owner) return mine
+    seen.add(mine.id)
+    const theirs = remoteById.get(mine.id)
+    return theirs ? { ...theirs, owner, dirty: false } : { ...mine, dirty: true }
+  })
+
+  const remoteOnly = remote
+    .filter((log) => !seen.has(log.id))
+    .sort((a, b) => a.completedAt - b.completedAt)
+    .map((log) => ({ ...log, owner, dirty: false }))
+
+  return [...merged, ...remoteOnly]
+}
+
+/** 로그인 전에 남긴 손님 기록을 이 계정으로 가져온다. 올려야 하므로 dirty 다. */
+export function adoptGuestWorkouts(local: WorkoutLog[], owner: string): WorkoutLog[] {
+  return local.map((log) => (log.owner === null ? { ...log, owner, dirty: true } : log))
+}
+
+/**
+ * 로그아웃할 때 그 계정의 서버에 이미 반영된 기록을 지운다 — 다음 사람이 쓰는 기기에 개인
+ * 기록이 남지 않게. 아직 못 올린 dirty 는 지우면 영영 잃으므로 남긴다.
+ */
+export function cleanupWorkoutsAfterSignOut(local: WorkoutLog[], owner: string): WorkoutLog[] {
+  return local.filter((log) => log.owner !== owner || log.dirty)
 }
 
 export type SessionChange =

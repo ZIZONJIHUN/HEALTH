@@ -33,6 +33,7 @@ const REASON = {
   routines: `루틴은 ${LIMITS.routines}개까지 저장할 수 있어요`,
   items: `루틴 하나에 운동은 ${LIMITS.items}개까지 담을 수 있어요`,
   name: `루틴 이름은 ${LIMITS.nameLength}자까지 쓸 수 있어요`,
+  itemsSize: '루틴에 담긴 운동 정보가 너무 커서 저장할 수 없어요',
   other: '서버가 이 루틴의 내용을 받아들이지 않았어요',
 } as const
 
@@ -130,8 +131,12 @@ export function classifyPushError(error: { code?: string; message: string } | nu
       // 트리거의 raise 문구는 이미 사람이 읽을 한국어다. 비어 있을 때만 대신 채운다.
       return { ok: false, kind: 'rejected', reason: error.message || REASON.routines }
     case '23514':
-      // check 제약 이름(routines_items_check / routines_name_check)으로 어느 상한인지 가린다.
+      // check 제약 이름(routines_items_check / routines_items_size_check / routines_name_check)으로 어느 상한인지 가린다.
       // id 길이처럼 사용자가 볼 일 없는 제약은 뭉뚱그린다 — 이름 탓으로 돌리면 엉뚱한 걸 고치게 된다.
+      // items_size 를 먼저 본다 — 'items' 도 들어 있어 순서를 바꾸면 개수 초과로 잘못 읽힌다.
+      if (error.message.includes('items_size')) {
+        return { ok: false, kind: 'rejected', reason: REASON.itemsSize }
+      }
       if (error.message.includes('items')) return { ok: false, kind: 'rejected', reason: REASON.items }
       if (error.message.includes('name')) return { ok: false, kind: 'rejected', reason: REASON.name }
       return { ok: false, kind: 'rejected', reason: REASON.other }

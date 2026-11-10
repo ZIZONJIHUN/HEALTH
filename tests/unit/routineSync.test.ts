@@ -180,6 +180,32 @@ describe('classifyPushError', () => {
         message: 'new row for relation "routines" violates check constraint "routines_name_check"',
       }),
     ).toEqual({ ok: false, kind: 'rejected', reason: '루틴 이름은 60자까지 쓸 수 있어요' })
+    // 크기 제약 이름에도 'items' 가 들어 있다 — 개수 초과로 잘못 읽으면 안 된다.
+    expect(
+      classifyPushError({
+        code: '23514',
+        message:
+          'new row for relation "routines" violates check constraint "routines_items_size_check"',
+      }),
+    ).toEqual({
+      ok: false,
+      kind: 'rejected',
+      reason: '루틴에 담긴 운동 정보가 너무 커서 저장할 수 없어요',
+    })
+    expect(
+      classifyPushError({
+        code: '23514',
+        message:
+          'new row for relation "workout_logs" violates check constraint "workout_logs_routine_id_check"',
+      }),
+    ).toMatchObject({ kind: 'rejected' })
+    expect(
+      classifyPushError({ code: 'P0001', message: '삭제 시각이 미래로 되어 있어 저장할 수 없어요' }),
+    ).toEqual({
+      ok: false,
+      kind: 'rejected',
+      reason: '삭제 시각이 미래로 되어 있어 저장할 수 없어요',
+    })
     // id 길이처럼 사용자가 고칠 수 없는 제약을 이름 탓으로 돌리지 않는다.
     expect(
       classifyPushError({

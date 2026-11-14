@@ -325,3 +325,11 @@ test('본 영상이 홈에 남고 누르면 다시 재생된다', async ({ page 
   await expect(page).toHaveURL(/\/feed\?recent=1&i=0/)
   await expect(page.getByTestId('feed-slide')).toHaveCount(1)
 })
+
+test('루틴 화면이 로그인 안내를 보여준다', async ({ page }) => {
+  // E2E 는 Supabase 가 꺼져 있어 상태가 늘 local 이다. 비로그인 사용자에게 저장 위치와 다음 행동을 알려야 한다.
+  await page.goto('/routines')
+  const line = page.getByTestId('sync-status')
+  await expect(line).toContainText('이 브라우저에만 저장돼요')
+  await expect(line.getByRole('link', { name: /로그인하면/ })).toHaveAttribute('href', '/account')
+})

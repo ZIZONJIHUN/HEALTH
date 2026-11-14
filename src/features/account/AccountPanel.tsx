@@ -87,7 +87,7 @@ export default function AccountPanel({
           </div>
 
           <p className="mt-4 text-sm leading-relaxed text-muted">
-            루틴은 아직 이 브라우저에만 저장돼요. 기기 간 이어보기는 준비 중이에요.
+            루틴과 운동 기록이 계정에 저장돼요. 다른 기기에서 로그인해도 그대로 보여요.
           </p>
 
           <button
@@ -104,7 +104,7 @@ export default function AccountPanel({
         <>
           <p className="text-[15px] font-semibold text-text">아직 로그인하지 않았어요.</p>
           <p className="mt-1 text-sm leading-relaxed text-muted">
-            루틴은 이 브라우저에만 저장돼요. 다른 기기에서는 보이지 않아요.
+            로그인하면 루틴과 운동 기록을 다른 기기에서도 볼 수 있어요.
           </p>
 
           <button

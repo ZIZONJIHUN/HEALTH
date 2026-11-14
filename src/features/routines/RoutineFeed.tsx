@@ -41,7 +41,7 @@ export default function RoutineFeed({
           testId="routine-missing"
           icon={<ListChecks size={22} weight={ICON_WEIGHT} aria-hidden />}
           title={routine ? '이 루틴은 비어 있어요.' : '루틴을 찾을 수 없어요.'}
-          description="루틴은 이 브라우저에만 저장돼요. 다른 기기에서 만든 루틴은 보이지 않아요."
+          description="루틴이 지워졌거나 다른 계정의 루틴이에요."
           actions={
             <Link href="/routines" className={BUTTON_PRIMARY}>
               루틴 보러가기

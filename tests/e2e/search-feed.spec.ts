@@ -333,3 +333,40 @@ test('루틴 화면이 로그인 안내를 보여준다', async ({ page }) => {
   await expect(line).toContainText('이 브라우저에만 저장돼요')
   await expect(line.getByRole('link', { name: /로그인하면/ })).toHaveAttribute('href', '/account')
 })
+
+test('루틴을 끝내면 이번 주 기록에 남는다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+
+  // 영상 하나를 담은 루틴을 만든다. 하나뿐이라 첫 슬라이드가 곧 마지막 슬라이드다.
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  await page.getByTestId('start-routine').click()
+  await expect(page).toHaveURL(/\/feed\?routine=.+&i=0/)
+
+  await page.getByTestId('finish-workout').click()
+  await expect(page.getByTestId('workout-recorded')).toBeVisible()
+  // 한 재생에서 두 번 기록되지 않는다 — 버튼이 결과 문구로 바뀐다.
+  await expect(page.getByTestId('finish-workout')).toHaveCount(0)
+
+  await page.goto('/routines')
+  await expect(page.getByTestId('workout-summary')).toContainText('연속 1일')
+  await expect(page.getByTestId('workout-summary')).toContainText('이번 달 1회')
+})
+
+test('기록이 없으면 안내 한 줄만 보인다', async ({ page }) => {
+  await page.goto('/routines')
+  await expect(page.getByText('루틴을 끝까지 하면 여기에 기록돼요.')).toBeVisible()
+  await expect(page.getByTestId('workout-summary')).toHaveCount(0)
+})
+
+test('검색 피드에는 운동 완료 버튼이 없다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').nth(8).click()
+  await expect(page.getByText('9 / 9')).toBeVisible()
+  // 검색 피드는 운동이 아니다. 마지막 슬라이드여도 기록할 것이 없다.
+  await expect(page.getByTestId('finish-workout')).toHaveCount(0)
+})

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import FeedSlide from '@/features/feed/FeedSlide'
 import { recordView } from '@/features/history/history'
 import { iconButtonClass } from '@/components/ui/IconButton'
+import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
 import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
 import type { ShortVideo } from '@/lib/types'
@@ -14,11 +15,20 @@ const MOUNT_WINDOW = 1
 /** 영상이 끝났을 때 "다음으로 해보세요"에 몇 개까지 보여줄지. */
 const NEXT_UP_COUNT = 3
 
+export type RoutineCompleteResult = 'recorded' | 'limit' | 'failed'
+
+const COMPLETE_MESSAGES: Record<RoutineCompleteResult, string> = {
+  recorded: '오늘 운동을 기록했어요 🔥',
+  limit: '오늘은 더 기록할 수 없어요',
+  failed: '기록을 저장하지 못했어요',
+}
+
 export default function ShortsFeed({
   videos,
   initialIndex,
   routineName,
   recordViews = true,
+  onRoutineComplete,
 }: {
   videos: ShortVideo[]
   initialIndex: number
@@ -26,12 +36,37 @@ export default function ShortsFeed({
   routineName?: string
   /** 보고 있는 영상을 "최근 본 영상"에 남길지. 최근 본 영상을 다시 볼 때만 끈다. */
   recordViews?: boolean
+  /** 루틴을 끝까지 했을 때 한 번 부른다. 기록은 부르는 쪽(RoutineFeed)이 남긴다. */
+  onRoutineComplete?: () => RoutineCompleteResult
 }) {
   const [activeIndex, setActiveIndex] = useState(initialIndex)
   const [endedIndex, setEndedIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<Array<HTMLDivElement | null>>([])
   const routineMode = routineName != null
+  const lastIndex = videos.length - 1
+
+  /**
+   * 한 재생에서 기록은 한 번뿐이다. 끝 감지와 "운동 완료" 버튼 중 먼저 온 쪽이 기록하고,
+   * 결과가 'limit'·'failed' 여도 다시 시도하지 않는다 — 버튼을 되살리면 연타로 같은 운동이
+   * 여러 번 쌓인다. 상태가 아니라 ref 로 막는 이유: 같은 틱에 두 경로가 겹치면 상태는 아직
+   * 갱신 전이라 둘 다 통과한다.
+   */
+  const completedRef = useRef(false)
+  const [completeResult, setCompleteResult] = useState<RoutineCompleteResult | null>(null)
+
+  // 부르는 쪽이 인라인 화살표를 넘겨도 종료 감지 구독(handleEnded)이 흔들리지 않게 최신 값만 ref 로 든다.
+  const onCompleteRef = useRef(onRoutineComplete)
+  useEffect(() => {
+    onCompleteRef.current = onRoutineComplete
+  }, [onRoutineComplete])
+
+  const completeRoutine = useCallback(() => {
+    const record = onCompleteRef.current
+    if (!record || completedRef.current) return
+    completedRef.current = true
+    setCompleteResult(record())
+  }, [])
 
   // 그리드에서 누른 영상으로 바로 이동한다.
   useEffect(() => {
@@ -66,7 +101,14 @@ export default function ShortsFeed({
   }, [recordViews, activeVideo])
 
   // FeedSlide 로 내려가는 참조가 렌더마다 바뀌면 종료 감지 구독이 계속 끊겼다 붙는다.
-  const handleEnded = useCallback((index: number) => setEndedIndex(index), [])
+  const handleEnded = useCallback(
+    (index: number) => {
+      setEndedIndex(index)
+      // 마지막 운동이 끝까지 재생됐다 = 루틴을 끝냈다. 버튼을 누르지 않아도 기록한다.
+      if (routineMode && index === lastIndex) completeRoutine()
+    },
+    [routineMode, lastIndex, completeRoutine],
+  )
 
   const goTo = useCallback(
     (index: number) => {
@@ -113,6 +155,10 @@ export default function ShortsFeed({
 
   const atFirst = activeIndex <= 0
   const atLast = activeIndex >= videos.length - 1
+  // 끝 감지는 실패할 수 있다(임베드가 신호를 안 보내는 환경). 그래서 루틴의 마지막 슬라이드에는
+  // 버튼을 항상 둔다. 검색·최근 피드는 운동이 아니므로 기록할 것이 없다.
+  const showFinish = routineMode && onRoutineComplete != null && activeIndex === lastIndex
+  const completeMessage = completeResult ? COMPLETE_MESSAGES[completeResult] : null
   const nextUp = videos.slice(activeIndex + 1, activeIndex + 1 + NEXT_UP_COUNT)
 
   return (
@@ -177,10 +223,43 @@ export default function ShortsFeed({
         </div>
       </div>
 
+      {/* 제목·담기 버튼 줄(FeedSlide 하단 오버레이) 바로 위에 따로 한 줄을 둔다. 그 줄을 차지하면
+          제목이 밀리고, 이 줄은 휴식 타이머 같은 루틴 전용 버튼이 옆에 더 붙을 자리다. */}
+      {showFinish ? (
+        <div className="pointer-events-none absolute inset-0 z-40 flex justify-center">
+          <div className={`relative h-full w-full ${FEED_PLAYER_BOX}`}>
+            <div
+              className="absolute inset-x-0 flex items-center gap-2 px-4"
+              style={{ bottom: 'calc(max(1.5rem, env(safe-area-inset-bottom)) + 4.5rem)' }}
+            >
+              {completeMessage ? (
+                <p
+                  role="status"
+                  data-testid={completeResult === 'recorded' ? 'workout-recorded' : 'workout-not-recorded'}
+                  className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-accent backdrop-blur-sm"
+                >
+                  {completeMessage}
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="finish-workout"
+                  onClick={completeRoutine}
+                  className={`pointer-events-auto ${BUTTON_PRIMARY}`}
+                >
+                  운동 완료
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {endedIndex === activeIndex ? (
         <NextUpPanel
           nextUp={nextUp}
           finishedLabel={routineMode ? '루틴을 끝냈어요' : '마지막 영상이었어요'}
+          finishedNote={completeMessage}
           startIndex={activeIndex + 1}
           onPick={goTo}
           onDismiss={() => setEndedIndex(null)}
@@ -200,12 +279,15 @@ function NextUpPanel({
   nextUp,
   startIndex,
   finishedLabel,
+  finishedNote,
   onPick,
   onDismiss,
 }: {
   nextUp: ShortVideo[]
   startIndex: number
   finishedLabel: string
+  /** 루틴을 끝냈을 때 기록 결과. 검색 피드에서는 없다. */
+  finishedNote?: string | null
   onPick: (index: number) => void
   onDismiss: () => void
 }) {
@@ -230,7 +312,12 @@ function NextUpPanel({
       </div>
 
       {nextUp.length === 0 ? (
-        <p className="mt-2 text-xs text-muted">수고했어요. 위로 넘겨 다시 볼 수 있어요.</p>
+        <>
+          {finishedNote ? (
+            <p className="mt-2 text-sm font-semibold text-accent">{finishedNote}</p>
+          ) : null}
+          <p className="mt-2 text-xs text-muted">수고했어요. 위로 넘겨 다시 볼 수 있어요.</p>
+        </>
       ) : (
         <ul className="mt-3 space-y-1.5">
           {nextUp.map((video, offset) => (

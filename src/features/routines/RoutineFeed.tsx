@@ -7,6 +7,7 @@ import { ICON_WEIGHT, ListChecks } from '@/components/ui/icons'
 import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { useHydrated } from '@/lib/useHydrated'
 import { useRoutines } from '@/features/routines/useRoutines'
+import { recordWorkout } from '@/features/workouts/workouts'
 
 /**
  * 루틴 재생. 검색 피드와 달리 서버에서 영상 목록을 가져오지 않는다 —
@@ -59,6 +60,7 @@ export default function RoutineFeed({
       videos={routine.items}
       initialIndex={initialIndex}
       routineName={routine.name}
+      onRoutineComplete={() => recordWorkout(routine)}
     />
   )
 }

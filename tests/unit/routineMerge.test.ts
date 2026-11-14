@@ -52,7 +52,7 @@ describe('mergeRoutines', () => {
     expect(merged.syncError).toBe('x')
   })
 
-  it('이긴 로컬이 remote 와 같으면 dirty 가 아니다', () => {
+  it('updatedAt 이 같으면 remote 가 이기고 dirty 가 아니다 — 로컬이 더 나중이면 dirty 다', () => {
     const local = [make('a', { updatedAt: 30 })]
     const remote = [make('a', { updatedAt: 20 })]
     // updatedAt 만 다르면 "다르다" — 서버에 올려 맞춰야 한다.
@@ -76,6 +76,24 @@ describe('mergeRoutines', () => {
     const localTomb = mergeRoutines([tomb], [older], 'u1')[0]
     expect(localTomb.deletedAt).toBe(25)
     expect(localTomb.dirty).toBe(true)
+  })
+
+  it('서버에 없는 로컬 묘비가 dirty 가 아니면 버린다 — 서버가 30일 지나 정리한 것이다', () => {
+    const pruned = make('t', { deletedAt: 5, updatedAt: 5, dirty: false })
+    const live = make('l')
+    const merged = mergeRoutines([pruned, live], [], 'u1')
+    expect(merged.map((r) => r.id)).toEqual(['l'])
+  })
+
+  it('서버에 없는 로컬 묘비가 dirty 면 남겨 올린다', () => {
+    const pending = make('t', { deletedAt: 5, updatedAt: 5, dirty: true })
+    const [merged] = mergeRoutines([pending], [], 'u1')
+    expect(merged).toMatchObject({ id: 't', deletedAt: 5, dirty: true })
+  })
+
+  it('다른 주인의 묘비는 서버에 없어도 버리지 않는다', () => {
+    const otherTomb = make('t', { owner: 'u2', deletedAt: 5, dirty: false })
+    expect(mergeRoutines([otherTomb], [], 'u1')).toEqual([otherTomb])
   })
 
   it('한쪽에만 있는 루틴은 남는다', () => {

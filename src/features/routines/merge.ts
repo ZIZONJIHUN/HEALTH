@@ -6,23 +6,16 @@ import type { StoredRoutine } from './routines'
  * 동기화 컨트롤러가 부르기 전에 규칙만 따로 검증할 수 있고, 입력은 바꾸지 않는다.
  */
 
-/** 두 루틴이 서버에 올릴 내용에서 같은가. 동기화 표시(owner·dirty·syncError)는 보지 않는다. */
-function sameContent(a: StoredRoutine, b: StoredRoutine): boolean {
-  return (
-    a.name === b.name &&
-    a.updatedAt === b.updatedAt &&
-    a.deletedAt === b.deletedAt &&
-    JSON.stringify(a.items) === JSON.stringify(b.items)
-  )
-}
-
 /**
  * `owner` 의 로컬 루틴과 서버 루틴을 id 로 합친다.
  *
  * - 같은 id 는 updatedAt 이 큰 쪽이 이긴다. 같으면 서버가 이긴다 — 서버가 기준이어야
  *   같은 내용을 서로 다시 올리는 왕복이 생기지 않는다.
- * - 로컬이 이겼는데 서버와 내용이 다르면 dirty 로 남겨 다음 동기화가 올리게 한다.
- *   서버에 없는 로컬 루틴도 같다. 지운 쪽이 이기면 묘비가 이기는 것이라 별도 규칙이 없다.
+ * - 로컬이 이기면(updatedAt 이 더 크다 = 서버와 다르다) dirty 로 남겨 다음 동기화가 올리게
+ *   한다. 서버에 없는 로컬 루틴도 같다. 지운 쪽이 이기면 묘비가 이기는 것이라 별도 규칙이 없다.
+ * - 단, 서버에 없는 로컬 **묘비**가 dirty 가 아니면 버린다. 서버가 이미 받아 둔 묘비를 30일
+ *   뒤 정리한 것이다. 다시 dirty 로 올리면 그 push 가 또 정리를 부르고, 다음 당기기에서 또
+ *   없어져 다시 올리는 왕복이 끝없이 돈다. 아직 못 올린(dirty) 묘비는 남겨 올린다.
  * - 다른 주인(손님 포함)의 로컬 루틴은 이 계정의 일이 아니므로 그대로 둔다.
  * - 순서는 로컬을 유지하고, 서버에만 있는 것은 createdAt 순으로 뒤에 붙인다.
  */
@@ -39,11 +32,12 @@ export function mergeRoutines(
     seen.add(mine.id)
 
     const theirs = remoteById.get(mine.id)
-    if (!theirs) return { ...mine, dirty: true }
-
-    if (mine.updatedAt > theirs.updatedAt) {
-      return { ...mine, dirty: !sameContent(mine, theirs) }
+    if (!theirs) {
+      if (mine.deletedAt !== null && !mine.dirty) return null
+      return { ...mine, dirty: true }
     }
+
+    if (mine.updatedAt > theirs.updatedAt) return { ...mine, dirty: true }
     return { ...theirs, owner, dirty: false, syncError: null }
   })
 
@@ -52,7 +46,8 @@ export function mergeRoutines(
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((routine) => ({ ...routine, owner, dirty: false, syncError: null }))
 
-  return [...merged, ...remoteOnly]
+  const kept = merged.filter((routine): routine is StoredRoutine => routine !== null)
+  return [...kept, ...remoteOnly]
 }
 
 /**

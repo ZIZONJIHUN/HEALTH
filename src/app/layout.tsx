@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
+import SyncController from '@/features/routines/SyncController'
 import './globals.css'
 
 /**
@@ -93,6 +94,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           본문 바로가기
         </a>
         {children}
+        {/* 로그인 사용자의 루틴·기록 동기화. 피드에서도 담기·기록이 일어나므로 루트에 둔다. */}
+        <SyncController />
       </body>
     </html>
   )

@@ -120,6 +120,29 @@ export function registerSyncRunner(runner: () => void): () => void {
 }
 
 /**
+ * 로그아웃 직전에 지금 사용자의 못 올린 변경을 밀어 본다. 최대 3초, 절대 던지지 않는다.
+ * auth.signOut() 뒤에는 세션이 없어 밀 수 없으므로 로그아웃 버튼이 그 전에 기다린다.
+ * 동기화가 돌고 있지 않으면(설정 없음, 비로그인) 바로 끝난다.
+ */
+let signOutFlush: (() => Promise<void>) | null = null
+
+export async function flushBeforeSignOut(): Promise<void> {
+  try {
+    await signOutFlush?.()
+  } catch {
+    // 밀기 실패가 로그아웃을 막으면 안 된다. 못 올린 것은 dirty 로 남아 정리에서 지켜진다.
+  }
+}
+
+/** 컨트롤러만 쓴다. 돌려준 함수로 떼어 낸다. */
+export function registerSignOutFlush(flush: () => Promise<void>): () => void {
+  signOutFlush = flush
+  return () => {
+    if (signOutFlush === flush) signOutFlush = null
+  }
+}
+
+/**
  * 컨트롤러가 기억하는 것 두 가지.
  * - last-user: 마지막으로 본 로그인 사용자. 앱이 꺼져 있는 동안 세션이 끝났어도 다음 실행 때
  *   "누가 나갔는지" 알아야 그 사람의 루틴을 이 브라우저에서 치울 수 있다.

@@ -361,4 +361,103 @@ describe('startSync', () => {
     expect(server.maxInFlight).toBe(1)
     expect(storedRoutines().every((r) => !r.dirty)).toBe(true)
   })
+
+  it('로그아웃 밀기 동안 주인은 이미 새 사용자다 — 그사이 만든 루틴이 이전 계정으로 가지 않는다', async () => {
+    const { startSync, getActiveOwner, createRoutine } = await freshEngine()
+    const { guestPrompt } = await import('@/features/routines/syncPlan')
+    const { loadStoredRoutines } = await import('@/features/routines/routines')
+    const { loadStoredWorkouts } = await import('@/features/workouts/workouts')
+    seed([routine('a', { dirty: true }), routine('g', { owner: null })], [], 'u1')
+    const server = fakeServer()
+    server.holdUntil(new Promise(() => {}))
+    stop = startSync(fakeAuth('u2').auth, server.io)
+    await flush(1_000)
+
+    // 아직 밀기를 기다리는 중이다(last-user 는 그대로).
+    expect(store.get(LAST_USER_KEY)).toBe('u1')
+    expect(getActiveOwner()).toBe('u2')
+    const created = createRoutine('새 루틴')!
+    const owners = storedRoutines().filter((r) => r.id === created.id).map((r) => r.owner)
+    expect(owners).toEqual(['u2'])
+    // 가져오기 시트는 지금 주인으로 묻는다 — 이전 사용자 계정으로 가져갈 길이 없다.
+    expect(getActiveOwner()).not.toBe('u1')
+    expect(guestPrompt(loadStoredRoutines(), loadStoredWorkouts())).not.toBeNull()
+
+    await flush(2_000)
+    expect(storedRoutines().find((r) => r.id === created.id)?.owner).toBe('u2')
+    expect(storedRoutines().some((r) => r.owner === 'u1' && r.id !== 'a')).toBe(false)
+  })
+
+  it('세션이 끝나 손님이 되면 밀기 동안 만든 루틴은 손님 것이다', async () => {
+    const { startSync, getActiveOwner, createRoutine } = await freshEngine()
+    seed([routine('a', { dirty: true })], [], 'u1')
+    const server = fakeServer()
+    server.holdUntil(new Promise(() => {}))
+    stop = startSync(fakeAuth(null).auth, server.io)
+    await flush(1_000)
+    expect(getActiveOwner()).toBeNull()
+    const created = createRoutine('손님 루틴')!
+    await flush(2_000)
+    expect(storedRoutines().find((r) => r.id === created.id)).toMatchObject({
+      owner: null,
+      dirty: false,
+    })
+  })
+})
+
+describe('flushBeforeSignOut', () => {
+  it('동기화가 돌지 않으면 바로 끝난다', async () => {
+    const { flushBeforeSignOut } = await freshEngine()
+    await expect(flushBeforeSignOut()).resolves.toBeUndefined()
+  })
+
+  it('세션이 살아 있을 때 지금 사용자의 dirty 를 민 뒤 끝난다', async () => {
+    const { startSync, flushBeforeSignOut, createRoutine } = await freshEngine()
+    seed([], [], 'u1')
+    const server = fakeServer()
+    stop = startSync(fakeAuth('u1').auth, server.io)
+    await flush()
+    createRoutine('하체')
+
+    let done = false
+    void flushBeforeSignOut().then(() => (done = true))
+    await flush()
+    // 디바운스(500ms)를 기다리지 않고 바로 밀었다.
+    expect(done).toBe(true)
+    expect(server.pushes).toHaveLength(1)
+    expect(storedRoutines()[0].dirty).toBe(false)
+  })
+
+  it('밀기가 끝나지 않아도 3초에서 끝난다', async () => {
+    const { startSync, flushBeforeSignOut, createRoutine } = await freshEngine()
+    seed([], [], 'u1')
+    const server = fakeServer()
+    stop = startSync(fakeAuth('u1').auth, server.io)
+    await flush()
+    server.holdUntil(new Promise(() => {}))
+    createRoutine('하체')
+
+    let done = false
+    void flushBeforeSignOut().then(() => (done = true))
+    await flush(2_999)
+    expect(done).toBe(false)
+    await flush(1)
+    expect(done).toBe(true)
+  })
+
+  it('밀기가 던져도 거절하지 않는다', async () => {
+    const { startSync, flushBeforeSignOut, createRoutine } = await freshEngine()
+    seed([], [], 'u1')
+    const server = fakeServer()
+    stop = startSync(fakeAuth('u1').auth, server.io)
+    await flush()
+    server.io.pushRoutine = async () => {
+      throw new Error('boom')
+    }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    createRoutine('하체')
+    const result = flushBeforeSignOut()
+    await flush()
+    await expect(result).resolves.toBeUndefined()
+  })
 })

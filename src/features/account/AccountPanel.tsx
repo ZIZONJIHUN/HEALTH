@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from '@/components/ui/Button'
 import { cardClass } from '@/components/ui/Card'
 import { ICON_WEIGHT, WarningCircle } from '@/components/ui/icons'
+import { flushBeforeSignOut } from '@/features/routines/syncStatus'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser'
 import type { AccountUser } from './session'
 
@@ -43,6 +44,8 @@ export default function AccountPanel({
     const supabase = createSupabaseBrowserClient()
     if (!supabase) return
     setBusy(true)
+    // 세션이 살아 있을 때 못 올린 변경을 먼저 밀어 본다(최대 3초). 로그아웃 뒤에는 밀 수 없다.
+    await flushBeforeSignOut()
     await supabase.auth.signOut()
     // 서버 컴포넌트가 들고 있는 사용자 정보를 다시 읽게 한다.
     router.refresh()

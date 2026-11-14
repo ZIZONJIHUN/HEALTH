@@ -28,7 +28,12 @@ import {
   shouldPullOnFocus,
   workoutsToPush,
 } from './syncPlan'
-import { readLastUser, registerSyncRunner, writeLastUser } from './syncStatus'
+import {
+  readLastUser,
+  registerSignOutFlush,
+  registerSyncRunner,
+  writeLastUser,
+} from './syncStatus'
 
 /**
  * 동기화 엔진 — 인증 변화·저장소 변경·포커스·타이머를 받아 당기기와 밀기를 돌린다.
@@ -59,6 +64,20 @@ export const SIGN_OUT_FLUSH_MS = 3_000
 export const CHANGE_DEBOUNCE_MS = 500
 
 type Stop = () => boolean
+
+/** 작업을 SIGN_OUT_FLUSH_MS 까지만 기다린다. 작업의 실패는 삼킨다 — 기다림이 목적이다. */
+function withinFlushLimit(work: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    work.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, SIGN_OUT_FLUSH_MS)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
 
 export function startSync(auth: SyncAuth, io: SyncIo): () => void {
   let disposed = false
@@ -147,17 +166,20 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
 
     // 마지막으로 본 사용자와 비교한다. 앱이 꺼져 있는 동안 끝난 세션도 여기서 잡힌다.
     const change = classifySessionChange(readLastUser(), current)
+
+    // 화면의 주인은 무엇보다 먼저 지금 사용자로 바꾼다. 이전 사용자를 주인으로 둔 채 밀기를
+    // 기다리면 그 몇 초 동안 새 사용자(또는 손님)에게 이전 사용자의 루틴이 보이고, 그때 만든
+    // 루틴이 이전 사용자 소유로 찍혀 다음에 그 계정으로 올라간다. 가져오기 시트도 지금 주인을
+    // 보므로 손님 루틴을 이전 사용자 계정에 넣을 수 있게 된다. 밀기와 정리는 주인을 인자로 받는다.
+    quietly(() => setActiveOwner(current))
+
     if (change.kind === 'signed-out' || change.kind === 'switched') {
       const previous = change.previous
+      // 이 시점의 클라이언트는 이미 이전 사용자의 세션을 잃었으므로 대개 실패한다(RLS → 일시 실패).
+      // 실제로 밀 수 있는 마지막 기회는 로그아웃 버튼의 flushBeforeSignOut 이다. 여기서는
+      // 세션 만료 직전에 갱신된 경우처럼 성공할 수도 있는 경우를 위해 짧게 한 번만 시도한다.
       let flushDone = false
-      let flushTimer: ReturnType<typeof setTimeout> | undefined
-      await Promise.race([
-        push(previous, () => disposed || flushDone),
-        new Promise((resolve) => {
-          flushTimer = setTimeout(resolve, SIGN_OUT_FLUSH_MS)
-        }),
-      ])
-      clearTimeout(flushTimer)
+      await withinFlushLimit(push(previous, () => disposed || flushDone))
       // 시간이 다 되면 남은 밀기를 멈춘다. 치운 뒤에 결과를 쓰면 지운 루틴이 되살아난다.
       flushDone = true
       if (disposed) return
@@ -169,7 +191,6 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
     }
     if (change.kind !== 'none') needPull = true
 
-    quietly(() => setActiveOwner(current))
     writeLastUser(current)
     if (current === null) {
       scheduleRetry(true)
@@ -182,13 +203,23 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
     scheduleRetry(ok)
   }
 
-  /** 한 번에 한 바퀴만 돈다. 도는 중에 들어온 요청은 끝난 뒤 한 바퀴 더로 모은다. */
-  async function kick(): Promise<void> {
-    if (disposed) return
+  /**
+   * 한 번에 한 바퀴만 돈다. 도는 중에 들어온 요청은 끝난 뒤 한 바퀴 더로 모은다.
+   * 돌려준 promise 는 그 "한 바퀴 더" 까지 끝나야 풀린다 — 로그아웃 전 밀기가 기다릴 수 있게.
+   */
+  let runDone: Promise<void> = Promise.resolve()
+
+  function kick(): Promise<void> {
+    if (disposed) return Promise.resolve()
     if (running) {
       again = true
-      return
+      return runDone
     }
+    runDone = run()
+    return runDone
+  }
+
+  async function run(): Promise<void> {
     running = true
     try {
       do {
@@ -240,11 +271,25 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
   }
   document.addEventListener('visibilitychange', onVisibility)
 
-  const offRunner = registerSyncRunner(() => {
-    // 사용자가 직접 눌렀다(또는 손님 것을 가져왔다) — 기다리던 백오프를 버리고 지금 한다.
+  function now(): Promise<void> {
+    // 사용자가 직접 눌렀다(또는 손님 것을 가져왔다, 로그아웃하려 한다) — 백오프를 버리고 지금 한다.
     clearTimeout(retryTimer)
     attempt = 0
-    void kick()
+    return kick()
+  }
+
+  const offRunner = registerSyncRunner(() => {
+    void now()
+  })
+
+  /**
+   * 로그아웃 버튼이 auth.signOut() 전에 기다린다. 세션이 살아 있을 때 밀어야 실제로 올라간다.
+   * 같은 바퀴 돌리기(kick)를 거치므로 진행 중인 밀기와 겹쳐 같은 주인에게 두 요청이 나가지 않는다.
+   * 사용자를 3초 넘게 붙잡지 않고, 실패해도 로그아웃은 막지 않는다(던지지 않는다).
+   */
+  const offFlush = registerSignOutFlush(async () => {
+    if (!currentUser) return
+    await withinFlushLimit(now())
   })
 
   return () => {
@@ -256,5 +301,6 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
     offWorkouts()
     document.removeEventListener('visibilitychange', onVisibility)
     offRunner()
+    offFlush()
   }
 }

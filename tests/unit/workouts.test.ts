@@ -77,6 +77,15 @@ describe('운동 기록 저장소', () => {
     expect(loadWorkouts()[0].routineName).toHaveLength(60)
   })
 
+  it('루틴 이름을 자를 때 60번째 자리의 이모지를 반으로 가르지 않는다', async () => {
+    const { recordWorkout, loadWorkouts } = await freshModules()
+    recordWorkout({ id: 'r1', name: '가'.repeat(59) + '💪' + '나'.repeat(10) })
+    const name = loadWorkouts()[0].routineName
+    expect(Array.from(name)).toHaveLength(60)
+    expect(name.endsWith('💪')).toBe(true)
+    expect(name.isWellFormed()).toBe(true)
+  })
+
   it('같은 날 20건을 넘기지 않는다', async () => {
     const { recordWorkout, loadWorkouts } = await freshModules()
     for (let i = 0; i < 20; i += 1) expect(recordWorkout(routine)).toBe('recorded')

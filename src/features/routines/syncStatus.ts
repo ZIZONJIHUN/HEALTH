@@ -43,7 +43,12 @@ export function syncStatusFrom(
 ): SyncStatus {
   if (owner === null) return LOCAL
 
-  const mine = routines.filter((routine) => routine.owner === owner)
+  // 거절된 묘비는 화면에 없는 루틴이라 사용자가 고칠 수 없다. 밀기 결과가 버리지만(applyRoutinePush),
+  // 그 전에 남은 값이 있어도 상태 줄이 보이지 않는 루틴 이름을 부르거나 pending 에 묶이지 않게 뺀다.
+  const mine = routines.filter(
+    (routine) =>
+      routine.owner === owner && !(routine.deletedAt !== null && routine.syncError !== null),
+  )
   const rejected = mine.filter((routine) => routine.syncError !== null)
   if (rejected.length > 0) {
     return {
@@ -56,6 +61,24 @@ export function syncStatusFrom(
   if (mine.some((routine) => routine.dirty)) return PENDING
   if (workouts.some((log) => log.owner === owner && log.dirty)) return PENDING
   return SYNCED
+}
+
+/**
+ * 로그아웃하면 이 브라우저에만 남는 변경이 있는가(설계 4.4). 로그아웃 직전 밀기 뒤에도 못 올린
+ * 것(dirty)이나 서버가 거절한 것이 있으면 true — 로그아웃 버튼이 확인을 띄운다.
+ */
+export function needsSignOutConfirm(
+  routines: StoredRoutine[],
+  workouts: WorkoutLog[],
+  owner: string | null,
+): boolean {
+  const status = syncStatusFrom(routines, workouts, owner)
+  return status.state === 'pending' || status.state === 'rejected'
+}
+
+/** needsSignOutConfirm 을 지금 저장소와 지금 주인으로 판단한다. */
+export function hasUnsavedChanges(): boolean {
+  return needsSignOutConfirm(loadStoredRoutines(), loadStoredWorkouts(), getActiveOwner())
 }
 
 function subscribe(listener: () => void): () => void {

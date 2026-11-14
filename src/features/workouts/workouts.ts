@@ -1,4 +1,4 @@
-import { getActiveOwner, onActiveOwnerChange } from '@/features/routines/routines'
+import { clampName, getActiveOwner, onActiveOwnerChange } from '@/features/routines/routines'
 import { toLocalDate } from './stats'
 
 /**
@@ -203,7 +203,7 @@ export function recordWorkout(
   const log: WorkoutLog = {
     id: nextId(),
     routineId: routine.id,
-    routineName: routine.name.slice(0, WORKOUT_LIMITS.routineNameLength),
+    routineName: clampName(routine.name, WORKOUT_LIMITS.routineNameLength),
     completedAt: now.getTime(),
     localDate,
     owner,

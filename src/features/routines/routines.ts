@@ -59,8 +59,13 @@ const EMPTY_STORED: StoredRoutine[] = []
 /** 지금 화면의 주인. 로그인 상태는 이 파일이 모른다 — 인증 쪽이 알려 준다. */
 let activeOwner: string | null = null
 
-function clampName(name: string): string {
-  return name.slice(0, LIMITS.nameLength)
+/**
+ * 코드 포인트 단위로 자른다. slice 는 UTF-16 단위라 경계에 걸린 이모지를 반쪽(외톨이 서로게이트)
+ * 으로 남기고, 서버의 char_length 는 코드 포인트를 세므로 길이 판단도 어긋난다.
+ */
+export function clampName(name: string, max: number = LIMITS.nameLength): string {
+  const chars = Array.from(name)
+  return chars.length <= max ? name : chars.slice(0, max).join('')
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -241,9 +246,33 @@ export function onActiveOwnerChange(listener: () => void): () => void {
   }
 }
 
+/**
+ * 화면의 주인이 정해졌는가. 처음에는 false 다 — 로그인 사용자도 activeOwner 가 null 로
+ * 시작하므로, 정해지기 전에 그리면 잠깐 손님 화면이 보이고 그사이 담은 것이 손님 루틴이 된다.
+ * 동기화가 사용자를 알아내 setActiveOwner 를 처음 부를 때(로그아웃 상태면 null 로) 정해진다.
+ * Supabase 설정이 없으면 물어볼 곳이 없으므로 컨트롤러가 곧바로 markOwnerResolved 를 부른다.
+ */
+let ownerResolved = false
+
+export function isOwnerResolved(): boolean {
+  return ownerResolved
+}
+
+/** 주인을 바꾸지 않고 "정해졌다" 만 알린다. 동기화를 켜지 않는 경로(설정 없음, 불러오기 실패)가 쓴다. */
+export function markOwnerResolved(): void {
+  if (ownerResolved) return
+  ownerResolved = true
+  notify()
+}
+
 /** 화면의 주인을 바꾼다. 보이는 목록이 통째로 바뀌므로 구독자에게 알린다. */
 export function setActiveOwner(userId: string | null): void {
-  if (userId === activeOwner) return
+  const wasResolved = ownerResolved
+  ownerResolved = true
+  if (userId === activeOwner) {
+    if (!wasResolved) notify()
+    return
+  }
   activeOwner = userId
   notify()
   for (const listener of ownerListeners) listener()
@@ -339,7 +368,11 @@ export function deleteRoutine(
     target.owner === null
       ? stored.filter((routine) => routine !== target)
       : stored.map((routine) =>
-          routine === target ? { ...routine, deletedAt: Date.now(), ...touched() } : routine,
+          // 묘비는 항목을 비운다. 되돌리기는 돌려준 routine 으로 다시 짓는다 — 묘비에 내용이
+          // 남으면 그 내용 때문에 서버가 거절했을 때 보이지 않는 루틴이 거절 상태로 계속 남는다.
+          routine === target
+            ? { ...routine, items: [], deletedAt: Date.now(), ...touched() }
+            : routine,
         )
   commit(next)
   return { routine: toRoutine(target), index, owner: target.owner }
@@ -362,6 +395,7 @@ export function restoreRoutine(
   const stored = loadStoredRoutines()
   const existing = stored.findIndex((item) => item.id === routine.id)
   if (existing !== -1 && stored[existing].owner !== activeOwner) return false
+  // 묘비는 항목을 비워 둔다(deleteRoutine). 내용은 넘겨받은 routine 에서 되살린다.
   const revived: StoredRoutine = {
     id: routine.id,
     name: clampName(routine.name),
@@ -465,6 +499,7 @@ export function resetRoutinesForTest(): void {
     window.localStorage.removeItem(LEGACY_KEY)
   }
   activeOwner = null
+  ownerResolved = false
   cachedRaw = null
   cachedStored = EMPTY_STORED
   cachedVisibleRaw = null

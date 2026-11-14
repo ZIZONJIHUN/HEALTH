@@ -16,13 +16,14 @@ import { fetchRoutines, fetchWorkouts, pushRoutine, pushWorkout } from './routin
 import {
   getActiveOwner,
   loadStoredRoutines,
+  markOwnerResolved,
   onActiveOwnerChange,
   replaceStoredRoutines,
   subscribeRoutines,
   type StoredRoutine,
 } from './routines'
 import { startSync, type SyncAuth, type SyncIo } from './syncEngine'
-import { guestPrompt } from './syncPlan'
+import { guestPrompt, userFromGetUser } from './syncPlan'
 import { isGuestKept, markGuestKept, retrySync } from './syncStatus'
 
 /**
@@ -36,10 +37,7 @@ import { isGuestKept, markGuestKept, retrySync } from './syncStatus'
  */
 
 /** 실제 Supabase 클라이언트를 엔진이 쓰는 모양으로 묶는다. 브라우저 anon 클라이언트만 넘어온다(RLS). */
-function bindClient(
-  client: SupabaseClient,
-  isOfflineError: (error: unknown) => boolean,
-): { auth: SyncAuth; io: SyncIo } {
+function bindClient(client: SupabaseClient): { auth: SyncAuth; io: SyncIo } {
   return {
     auth: {
       onUserChange(listener) {
@@ -50,9 +48,8 @@ function bindClient(
       },
       async getUser() {
         const { data, error } = await client.auth.getUser()
-        // 오프라인이라 확인을 못 한 것은 로그아웃이 아니다.
-        if (error && isOfflineError(error)) return 'unknown'
-        return data.user?.id ?? null
+        // 세션 없음·토큰 거절만 로그아웃이다. 오프라인·서버 오류처럼 확인을 못 한 것은 모름.
+        return userFromGetUser(data.user?.id ?? null, error)
       },
     },
     io: {
@@ -68,19 +65,31 @@ export default function SyncController() {
   const [enabled, setEnabled] = useState(false)
 
   useEffect(() => {
-    if (!supabasePublicConfig()) return
+    // 동기화를 켜지 않는 경로에서는 물어볼 사용자가 없다 — 손님으로 정해졌다고 바로 알린다.
+    // 켜는 경로에서는 엔진이 사용자를 알아내 setActiveOwner 를 처음 부를 때 정해진다.
+    if (!supabasePublicConfig()) {
+      markOwnerResolved()
+      return
+    }
     let stop: (() => void) | null = null
     let cancelled = false
-    Promise.all([import('@/lib/supabase/browser'), import('@supabase/supabase-js')]).then(
-      ([{ createSupabaseBrowserClient }, { isAuthRetryableFetchError }]) => {
+    import('@/lib/supabase/browser')
+      .then(({ createSupabaseBrowserClient }) => {
         if (cancelled) return
         const client = createSupabaseBrowserClient()
-        if (!client) return
-        const { auth, io } = bindClient(client, isAuthRetryableFetchError)
+        if (!client) {
+          markOwnerResolved()
+          return
+        }
+        const { auth, io } = bindClient(client)
         stop = startSync(auth, io)
         setEnabled(true)
-      },
-    )
+      })
+      .catch((error: unknown) => {
+        // 청크를 받지 못했다(배포 직후 옛 번들, 오프라인 첫 방문). 동기화 없이 손님처럼 쓴다.
+        console.error('[sync] 동기화 모듈을 불러오지 못했어요 — 동기화를 끕니다', error)
+        if (!cancelled) markOwnerResolved()
+      })
     return () => {
       cancelled = true
       stop?.()

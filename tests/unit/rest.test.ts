@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { REST, clampRest, formatRest, normalizeRest, suggestRestSeconds } from '@/features/routines/rest'
+import {
+  DEFAULT_REST_SECONDS,
+  REST,
+  clampRest,
+  formatRest,
+  normalizeRest,
+  restAt,
+  suggestRestSeconds,
+} from '@/features/routines/rest'
 
 // 스펙 6.1 표의 키워드마다 한 제목씩. 표를 고치면 여기서 바로 깨진다.
 const BIG = [
@@ -62,5 +70,17 @@ describe('formatRest', () => {
     expect(formatRest(90)).toBe('1분 30초')
     expect(formatRest(120)).toBe('2분')
     expect(formatRest(300)).toBe('5분')
+  })
+})
+
+describe('restAt', () => {
+  it('index 번째 운동의 휴식 시간을 돌려준다', () => {
+    expect(restAt([{ restSeconds: 30 }, { restSeconds: 90 }], 1)).toBe(90)
+  })
+
+  it('재생 중 루틴이 줄어 범위를 벗어나면 기본값이다 — 던지지 않는다', () => {
+    expect(restAt([{ restSeconds: 30 }], 3)).toBe(DEFAULT_REST_SECONDS)
+    expect(restAt([], 0)).toBe(DEFAULT_REST_SECONDS)
+    expect(DEFAULT_REST_SECONDS).toBe(suggestRestSeconds('알 수 없는 제목'))
   })
 })

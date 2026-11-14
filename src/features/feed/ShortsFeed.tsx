@@ -47,12 +47,15 @@ export default function ShortsFeed({
    */
   restFor?: (index: number) => number
 }) {
-  const [activeIndex, setActiveIndex] = useState(initialIndex)
+  const [observedIndex, setActiveIndex] = useState(initialIndex)
   const [endedIndex, setEndedIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<Array<HTMLDivElement | null>>([])
   const routineMode = routineName != null
   const lastIndex = videos.length - 1
+  // 재생 중 목록이 줄면(다른 탭에서 루틴 운동을 뺐다) 보던 자리가 범위를 벗어난다. 상태를 고치지
+  // 않고 렌더에서 끝으로 당긴다 — 관찰자가 다음 교차에서 실제 자리로 다시 맞춘다.
+  const activeIndex = Math.min(observedIndex, Math.max(lastIndex, 0))
 
   /**
    * 한 재생에서 기록은 한 번뿐이다. 끝 감지와 "운동 완료" 버튼 중 먼저 온 쪽이 기록하고,

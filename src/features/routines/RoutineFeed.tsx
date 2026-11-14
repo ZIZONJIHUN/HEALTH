@@ -6,7 +6,8 @@ import ShortsFeed from '@/features/feed/ShortsFeed'
 import { ICON_WEIGHT, ListChecks } from '@/components/ui/icons'
 import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
+import { restAt } from '@/features/routines/rest'
 import { recordWorkout } from '@/features/workouts/workouts'
 
 /**
@@ -24,10 +25,12 @@ export default function RoutineFeed({
   const routines = useRoutines()
   // 서버 렌더에는 루틴이 없다. 하이드레이션 전에는 "없음"으로 단정하면 안 된다.
   const hydrated = useHydrated()
+  // 주인이 정해지기 전에는 로그인 사용자의 루틴이 아직 보이지 않는다 — "없음" 으로 단정하지 않는다.
+  const ownerResolved = useOwnerResolved()
 
   const routine = routines.find((item) => item.id === routineId)
 
-  if (!hydrated) {
+  if (!hydrated || !ownerResolved) {
     return (
       <div data-feed-root="" className="flex h-dvh items-center justify-center bg-black">
         <div className="skeleton h-3/5 w-[min(90vw,280px)] rounded-2xl" />
@@ -61,7 +64,7 @@ export default function RoutineFeed({
       initialIndex={initialIndex}
       routineName={routine.name}
       onRoutineComplete={() => recordWorkout(routine)}
-      restFor={(index) => routine.items[index].restSeconds}
+      restFor={(index) => restAt(routine.items, index)}
     />
   )
 }

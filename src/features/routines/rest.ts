@@ -8,6 +8,9 @@ export const REST = { presets: [30, 60, 90], step: 10, min: 10, max: 300 } as co
 
 type Rest = 30 | 60 | 90
 
+/** 제목으로 판단할 수 없을 때의 휴식 시간. */
+export const DEFAULT_REST_SECONDS = 60
+
 // 키워드는 공백을 뺀 소문자로 적는다. 비교 쪽도 같은 꼴로 만들기 때문이다.
 const LONG_KEYWORDS = [
   '스쿼트', '데드리프트', '벤치프레스', '오버헤드프레스', '밀리터리프레스', '로우', '풀업', '친업',
@@ -37,7 +40,15 @@ export function suggestRestSeconds(title: string): Rest {
   for (const [seconds, keywords] of RULES) {
     if (keywords.some((k) => t.includes(k))) return seconds
   }
-  return 60
+  return DEFAULT_REST_SECONDS
+}
+
+/**
+ * index 번째 운동의 휴식 시간. 재생 중 다른 탭·기기에서 루틴이 줄면 index 가 범위를 벗어날 수
+ * 있다 — 그때는 기본값으로 대신해 재생 화면을 죽이지 않는다.
+ */
+export function restAt(items: readonly { restSeconds: number }[], index: number): number {
+  return items[index]?.restSeconds ?? DEFAULT_REST_SECONDS
 }
 
 /** 사용자 조절값을 10초 단위로 맞추고 허용 범위로 자른다. */

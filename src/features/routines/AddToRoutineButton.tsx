@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ICON_WEIGHT, Plus } from '@/components/ui/icons'
 import { addVideoToRoutine, createRoutine, LIMITS } from '@/features/routines/routines'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
 import type { ShortVideo } from '@/lib/types'
 
 /**
@@ -31,6 +31,8 @@ export default function AddToRoutineButton({
   // 메뉴와 실패 안내가 같은 방향으로 열려야 한다.
   const openSide = placement === 'above' ? 'bottom-9' : 'top-9'
   const routines = useRoutines()
+  // 주인이 정해지기 전에 담으면 로그인 사용자의 것이 손님 루틴으로 만들어진다. 그동안은 막는다.
+  const ownerResolved = useOwnerResolved()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
@@ -114,8 +116,9 @@ export default function AddToRoutineButton({
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        disabled={!ownerResolved}
         onClick={() => setOpen((value) => !value)}
-        className={`flex h-8 w-8 items-center justify-center rounded-full border backdrop-blur-md ${
+        className={`flex h-8 w-8 items-center justify-center rounded-full border backdrop-blur-md disabled:opacity-40 ${
           savedIn.length
             ? 'border-accent-dim bg-accent text-accent-fg'
             : 'border-white/15 bg-black/55 text-text hover:border-accent-dim hover:text-accent'

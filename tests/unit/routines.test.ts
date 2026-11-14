@@ -312,6 +312,20 @@ describe('루틴 저장소', () => {
     expect(m.loadRoutines().map((x) => x.name)).toEqual(['가슴'])
   })
 
+  it('묘비는 항목을 비우고, 되돌리면 돌려받은 루틴의 항목으로 살아난다', async () => {
+    const m = await freshModule()
+    m.setActiveOwner('u1')
+    const r = m.createRoutine('가슴')!
+    m.addVideoToRoutine(r.id, video('bench'))
+    m.addVideoToRoutine(r.id, video('fly'))
+    const deleted = m.deleteRoutine(r.id)!
+    expect(m.loadStoredRoutines()[0].items).toEqual([])
+    expect(deleted.routine.items.map((i) => i.id)).toEqual(['bench', 'fly'])
+
+    m.restoreRoutine(deleted.routine, deleted.index, deleted.owner)
+    expect(m.getRoutine(r.id)?.items.map((i) => i.id)).toEqual(['bench', 'fly'])
+  })
+
   it('지울 때의 주인을 함께 돌려준다', async () => {
     const m = await freshModule()
     m.setActiveOwner('u1')
@@ -456,6 +470,42 @@ describe('루틴 저장소', () => {
     expect(r.name).toHaveLength(60)
     m.renameRoutine(r.id, '나'.repeat(70))
     expect(m.getRoutine(r.id)?.name).toHaveLength(60)
+  })
+
+  it('이름을 자를 때 60번째 자리의 이모지를 반으로 가르지 않는다', async () => {
+    const m = await freshModule()
+    const r = m.createRoutine('가'.repeat(59) + '💪' + '나'.repeat(10))!
+    expect(Array.from(r.name)).toHaveLength(60)
+    expect(r.name.endsWith('💪')).toBe(true)
+    expect(r.name.isWellFormed()).toBe(true)
+    m.renameRoutine(r.id, '다'.repeat(59) + '🏋️')
+    // 🏋️ 는 코드 포인트 두 개(🏋 + 변형 선택자)라 첫 번째만 남는다. 반쪽 서로게이트는 없다.
+    const renamed = m.getRoutine(r.id)!.name
+    expect(Array.from(renamed)).toHaveLength(60)
+    expect(renamed.isWellFormed()).toBe(true)
+  })
+
+  it('주인은 처음에 정해지지 않았고, setActiveOwner 나 markOwnerResolved 로 정해진다', async () => {
+    const m = await freshModule()
+    const listener = vi.fn()
+    m.subscribeRoutines(listener)
+    expect(m.isOwnerResolved()).toBe(false)
+    // 로그아웃 상태로 확인된 경우 — 주인은 그대로 null 이지만 정해졌다고 알린다.
+    m.setActiveOwner(null)
+    expect(m.isOwnerResolved()).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(1)
+    m.setActiveOwner(null)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    const fresh = await freshModule()
+    const second = vi.fn()
+    fresh.subscribeRoutines(second)
+    fresh.markOwnerResolved()
+    fresh.markOwnerResolved()
+    expect(fresh.isOwnerResolved()).toBe(true)
+    expect(second).toHaveBeenCalledTimes(1)
+    fresh.resetRoutinesForTest()
+    expect(fresh.isOwnerResolved()).toBe(false)
   })
 
   it('주인을 오가도 바뀌지 않았으면 같은 참조를 돌려준다', async () => {

@@ -18,6 +18,23 @@ export function retryDelay(attempt: number): number {
   return RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)]
 }
 
+/**
+ * auth.getUser() 의 결과를 엔진이 쓰는 값으로 옮긴다.
+ *
+ * 로그아웃으로 읽어도 되는 오류는 둘뿐이다 — 세션이 없다(AuthSessionMissingError), 서버가 토큰을
+ * 거절했다(401·403). 나머지(오프라인, 5xx, 모르는 오류)는 'unknown' 이다. 모르는 것을 로그아웃으로
+ * 읽으면 엔진이 이 사용자의 반영된 루틴을 브라우저에서 치워 버린다.
+ */
+export function userFromGetUser(
+  userId: string | null,
+  error: { name?: string; status?: number } | null,
+): string | null | 'unknown' {
+  if (error === null) return userId
+  if (error.name === 'AuthSessionMissingError') return null
+  if (error.status === 401 || error.status === 403) return null
+  return 'unknown'
+}
+
 /** 포커스가 돌아올 때 다시 당기는 최소 간격. 탭을 오갈 때마다 두 표를 통째로 읽지 않게. */
 export const PULL_STALE_MS = 30_000
 
@@ -80,6 +97,13 @@ export function applyRoutinePush(
   if (!result.ok && result.kind === 'transient') return stored
   const index = stored.findIndex((routine) => routine.id === pushed.id)
   if (index === -1 || !sameVersion(stored[index], pushed)) return stored
+
+  // 거절된 묘비는 버린다. 화면에 없는 루틴이라 사용자가 고칠 수 없고, 남기면 상태 줄이 보이지
+  // 않는 루틴을 영영 "저장 안 됨" 으로 부른다. 서버에는 지우기 전 사본이 남지만, 다음 당기기가
+  // 그것을 내려받아도 다시 지우면 된다 — 고칠 수 없는 거절 상태보다 낫다.
+  if (!result.ok && stored[index].deletedAt !== null) {
+    return stored.filter((_, i) => i !== index)
+  }
 
   const next = stored.slice()
   next[index] = result.ok

@@ -30,7 +30,7 @@ import {
 } from '@/features/routines/routines'
 import RestPicker from '@/features/routines/RestPicker'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
 
 /** 실행 취소를 띄워 두는 시간. 짧으면 놓치고, 길면 화면에 계속 걸리적거린다. */
 const UNDO_WINDOW_MS = 8000
@@ -41,6 +41,8 @@ export default function RoutineList() {
   const routines = useRoutines()
   // 서버 렌더에는 루틴이 없다. 하이드레이션 전에 "없음" 화면을 그리면 깜빡인다.
   const hydrated = useHydrated()
+  // 로그인 사용자도 주인이 정해지기 전에는 손님 목록이 보인다. 그 순간도 불러오는 중으로 다룬다.
+  const ownerResolved = useOwnerResolved()
   const [deleted, setDeleted] = useState<Deleted | null>(null)
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export default function RoutineList() {
     return () => clearTimeout(timer)
   }, [deleted])
 
-  if (!hydrated) {
+  if (!hydrated || !ownerResolved) {
     return (
       <div role="status" aria-label="루틴 불러오는 중" className="space-y-4">
         <div className="skeleton h-40 rounded-2xl" />

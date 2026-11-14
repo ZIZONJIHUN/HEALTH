@@ -9,6 +9,7 @@ import {
   retryDelay,
   routinesToPush,
   shouldPullOnFocus,
+  userFromGetUser,
   workoutsToPush,
 } from '@/features/routines/syncPlan'
 
@@ -200,5 +201,52 @@ describe('guestPrompt', () => {
 
   it('손님 것이 없으면 null', () => {
     expect(guestPrompt([routine('a')], [log('w'), log('x', { owner: 'u2' })])).toBeNull()
+  })
+})
+
+describe('applyRoutinePush — 묘비', () => {
+  it('거절된 묘비는 저장소에서 버린다', () => {
+    const tomb = routine('t', { deletedAt: 5, dirty: true })
+    const live = routine('a')
+    const next = applyRoutinePush([tomb, live], tomb, {
+      ok: false,
+      kind: 'rejected',
+      reason: '거절',
+    })
+    expect(next).toEqual([live])
+  })
+
+  it('받아들여진 묘비는 dirty 만 끈다', () => {
+    const tomb = routine('t', { deletedAt: 5, dirty: true })
+    const [next] = applyRoutinePush([tomb], tomb, { ok: true })
+    expect(next).toMatchObject({ id: 't', deletedAt: 5, dirty: false, syncError: null })
+  })
+
+  it('일시 실패한 묘비는 그대로 둔다', () => {
+    const stored = [routine('t', { deletedAt: 5, dirty: true })]
+    expect(applyRoutinePush(stored, stored[0], { ok: false, kind: 'transient' })).toBe(stored)
+  })
+})
+
+describe('userFromGetUser', () => {
+  it('오류가 없으면 사용자(또는 null)를 그대로 쓴다', () => {
+    expect(userFromGetUser('u1', null)).toBe('u1')
+    expect(userFromGetUser(null, null)).toBeNull()
+  })
+
+  it('세션 없음은 로그아웃이다', () => {
+    expect(userFromGetUser(null, { name: 'AuthSessionMissingError', status: 400 })).toBeNull()
+  })
+
+  it('토큰 거절(401·403)은 로그아웃이다', () => {
+    expect(userFromGetUser(null, { name: 'AuthApiError', status: 401 })).toBeNull()
+    expect(userFromGetUser(null, { name: 'AuthApiError', status: 403 })).toBeNull()
+  })
+
+  it('그 밖의 오류는 모름이다 — 오프라인, 서버 오류, 모르는 오류', () => {
+    expect(userFromGetUser(null, { name: 'AuthRetryableFetchError', status: 0 })).toBe('unknown')
+    expect(userFromGetUser(null, { name: 'AuthApiError', status: 500 })).toBe('unknown')
+    expect(userFromGetUser(null, { name: 'AuthUnknownError' })).toBe('unknown')
+    expect(userFromGetUser(null, { name: 'AuthApiError', status: 400 })).toBe('unknown')
   })
 })

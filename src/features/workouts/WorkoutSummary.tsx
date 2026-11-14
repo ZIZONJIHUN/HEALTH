@@ -2,6 +2,7 @@
 
 import { cardClass } from '@/components/ui/Card'
 import { useHydrated } from '@/lib/useHydrated'
+import { useOwnerResolved } from '@/features/routines/useRoutines'
 import { workoutStats } from './stats'
 import { useWorkouts } from './useWorkouts'
 
@@ -17,8 +18,10 @@ const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'] as const
 export default function WorkoutSummary() {
   const hydrated = useHydrated()
   const logs = useWorkouts()
+  // 주인이 정해지기 전에는 손님 기록이 보인다. 하이드레이션 전과 같이 아무것도 그리지 않는다.
+  const ownerResolved = useOwnerResolved()
 
-  if (!hydrated) return null
+  if (!hydrated || !ownerResolved) return null
 
   if (logs.length === 0) {
     return <p className="text-sm text-muted">루틴을 끝까지 하면 여기에 기록돼요.</p>

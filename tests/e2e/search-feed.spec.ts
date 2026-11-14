@@ -441,3 +441,33 @@ test('검색 피드에는 휴식 버튼이 없다', async ({ page }) => {
   await expect(page.getByTestId('feed-slide').first()).toBeVisible()
   await expect(page.getByTestId('start-rest')).toHaveCount(0)
 })
+
+test('재생 중 다른 탭에서 루틴이 줄어도 재생 화면이 살아 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').nth(0).click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('줄어드는 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+  await page.getByTestId('add-to-routine').nth(1).click()
+  await page.getByRole('button', { name: /^줄어드는 루틴/ }).click()
+
+  // 마지막 운동에서 재생을 시작한다.
+  const routineId = await page.evaluate(
+    () => JSON.parse(window.localStorage.getItem('health-shorts:routines:v2')!)[0].id as string,
+  )
+  await page.goto(`/feed?routine=${routineId}&i=1`)
+  await expect(page.getByText('2 / 2')).toBeVisible()
+
+  // 다른 탭이 마지막 운동을 뺐다. storage 이벤트는 다른 탭에서만 오므로 직접 쏜다.
+  await page.evaluate(() => {
+    const key = 'health-shorts:routines:v2'
+    const routines = JSON.parse(window.localStorage.getItem(key)!)
+    routines[0].items = routines[0].items.slice(0, 1)
+    window.localStorage.setItem(key, JSON.stringify(routines))
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+  })
+
+  await expect(page.getByText('1 / 1')).toBeVisible()
+  await expect(page.getByTestId('start-rest')).toBeVisible()
+  await expect(page.getByTestId('finish-workout')).toBeVisible()
+})

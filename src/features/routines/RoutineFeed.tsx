@@ -61,6 +61,7 @@ export default function RoutineFeed({
       initialIndex={initialIndex}
       routineName={routine.name}
       onRoutineComplete={() => recordWorkout(routine)}
+      restFor={(index) => routine.items[index].restSeconds}
     />
   )
 }

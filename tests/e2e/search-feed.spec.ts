@@ -370,3 +370,74 @@ test('검색 피드에는 운동 완료 버튼이 없다', async ({ page }) => {
   // 검색 피드는 운동이 아니다. 마지막 슬라이드여도 기록할 것이 없다.
   await expect(page.getByTestId('finish-workout')).toHaveCount(0)
 })
+
+test('루틴의 운동마다 휴식 시간을 정하고 재생 중 타이머를 쓴다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  // 첫 카드는 모의 서버의 '스쿼트 기본 자세' — 큰 근육 운동이라 추천은 90초다.
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  const picker = page.getByTestId('rest-picker').first()
+  // 추천 표시는 추천값 칩 안에 있다. 담을 때 추천값으로 정해져 그 칩이 켜져 있다.
+  const recommended = picker.getByRole('button', { name: '1분 30초' })
+  await expect(recommended).toContainText('추천')
+  await expect(recommended).toHaveAttribute('aria-pressed', 'true')
+  await expect(picker.getByRole('button', { name: '60초', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+
+  await picker.getByRole('button', { name: '60초', exact: true }).click()
+  await expect(picker.getByRole('button', { name: '60초', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await picker.getByRole('button', { name: '1분 30초' }).click()
+  await picker.getByRole('button', { name: '휴식 10초 늘리기' }).click()
+  await expect(picker).toContainText('1분 40초')
+  // 프리셋이 아닌 값이면 켜진 칩이 없다.
+  await expect(picker.getByRole('button', { name: '1분 30초' })).toHaveAttribute('aria-pressed', 'false')
+  await page.reload()
+  await expect(page.getByTestId('rest-picker').first()).toContainText('1분 40초') // 저장됨
+
+  await page.getByTestId('start-routine').click()
+  await expect(page.getByTestId('start-rest')).toContainText('1분 40초')
+  await page.getByTestId('start-rest').click()
+  await expect(page.getByTestId('rest-panel')).toContainText(/1:(40|39|38)/)
+  await page.getByRole('button', { name: '+10초' }).click()
+  await expect(page.getByTestId('rest-panel')).toContainText(/1:(50|49|48|47)/)
+  await page.getByRole('button', { name: '건너뛰기' }).click()
+  await expect(page.getByTestId('rest-panel')).toHaveCount(0)
+  // 재생 중 조절은 저장하지 않는다.
+  await expect(page.getByTestId('start-rest')).toContainText('1분 40초')
+})
+
+test('휴식이 끝나면 휴식 끝을 잠깐 보여주고 닫힌다', async ({ page }) => {
+  await page.clock.install()
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  const picker = page.getByTestId('rest-picker').first()
+  await picker.getByRole('button', { name: '30초', exact: true }).click()
+  await page.getByTestId('start-routine').click()
+  await page.getByTestId('start-rest').click()
+  await expect(page.getByTestId('rest-panel')).toContainText('0:30')
+
+  await page.clock.runFor(31_000)
+  await expect(page.getByTestId('rest-panel')).toContainText('휴식 끝')
+  await page.clock.runFor(2_500)
+  await expect(page.getByTestId('rest-panel')).toHaveCount(0)
+})
+
+test('검색 피드에는 휴식 버튼이 없다', async ({ page }) => {
+  await page.goto('/feed?q=스쿼트')
+  await expect(page.getByTestId('feed-slide').first()).toBeVisible()
+  await expect(page.getByTestId('start-rest')).toHaveCount(0)
+})

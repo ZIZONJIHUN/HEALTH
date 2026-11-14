@@ -7,6 +7,7 @@ import { iconButtonClass } from '@/components/ui/IconButton'
 import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
 import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
+import { RestPanel, StartRestButton, useRestRun } from '@/features/routines/RestTimerControls'
 import type { ShortVideo } from '@/lib/types'
 
 /** 현재 슬라이드 기준 앞뒤 몇 개까지 iframe을 마운트할지. */
@@ -29,6 +30,7 @@ export default function ShortsFeed({
   routineName,
   recordViews = true,
   onRoutineComplete,
+  restFor,
 }: {
   videos: ShortVideo[]
   initialIndex: number
@@ -38,6 +40,12 @@ export default function ShortsFeed({
   recordViews?: boolean
   /** 루틴을 끝까지 했을 때 한 번 부른다. 기록은 부르는 쪽(RoutineFeed)이 남긴다. */
   onRoutineComplete?: () => RoutineCompleteResult
+  /**
+   * 루틴 재생에서 index 번째 운동의 휴식 시간(초). 있으면 휴식 타이머를 그린다.
+   * videos 를 RoutineItem 으로 넓히지 않고 함수로 받는 이유: 검색·최근 피드는 휴식 개념이
+   * 없어서, 타입을 넓히면 그쪽이 의미 없는 값을 채워 넘겨야 한다.
+   */
+  restFor?: (index: number) => number
 }) {
   const [activeIndex, setActiveIndex] = useState(initialIndex)
   const [endedIndex, setEndedIndex] = useState<number | null>(null)
@@ -54,6 +62,9 @@ export default function ShortsFeed({
    */
   const completedRef = useRef(false)
   const [completeResult, setCompleteResult] = useState<RoutineCompleteResult | null>(null)
+
+  // 휴식은 슬라이드를 넘겨도 이어져야 해서 슬라이드가 아니라 여기서 든다.
+  const rest = useRestRun()
 
   // 부르는 쪽이 인라인 화살표를 넘겨도 종료 감지 구독(handleEnded)이 흔들리지 않게 최신 값만 ref 로 든다.
   const onCompleteRef = useRef(onRoutineComplete)
@@ -158,6 +169,9 @@ export default function ShortsFeed({
   // 끝 감지는 실패할 수 있다(임베드가 신호를 안 보내는 환경). 그래서 루틴의 마지막 슬라이드에는
   // 버튼을 항상 둔다. 검색·최근 피드는 운동이 아니므로 기록할 것이 없다.
   const showFinish = routineMode && onRoutineComplete != null && activeIndex === lastIndex
+  // 휴식은 사용자가 직접 시작한다. 영상 끝에 자동으로 걸면 한 세트 더 하려던 사람을 막는다.
+  const restSeconds = routineMode && restFor ? restFor(activeIndex) : null
+  const showRoutineRow = showFinish || restSeconds != null
   const completeMessage = completeResult ? COMPLETE_MESSAGES[completeResult] : null
   const nextUp = videos.slice(activeIndex + 1, activeIndex + 1 + NEXT_UP_COUNT)
 
@@ -225,31 +239,47 @@ export default function ShortsFeed({
 
       {/* 제목·담기 버튼 줄(FeedSlide 하단 오버레이) 바로 위에 따로 한 줄을 둔다. 그 줄을 차지하면
           제목이 밀리고, 이 줄은 휴식 타이머 같은 루틴 전용 버튼이 옆에 더 붙을 자리다. */}
-      {showFinish ? (
+      {showRoutineRow ? (
         <div className="pointer-events-none absolute inset-0 z-40 flex justify-center">
           <div className={`relative h-full w-full ${FEED_PLAYER_BOX}`}>
             <div
-              className="absolute inset-x-0 flex items-center gap-2 px-4"
+              className="absolute inset-x-0 flex flex-col gap-2 px-4"
               style={{ bottom: 'calc(max(1.5rem, env(safe-area-inset-bottom)) + 4.5rem)' }}
             >
-              {completeMessage ? (
-                <p
-                  role="status"
-                  data-testid={completeResult === 'recorded' ? 'workout-recorded' : 'workout-not-recorded'}
-                  className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-accent backdrop-blur-sm"
-                >
-                  {completeMessage}
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="finish-workout"
-                  onClick={completeRoutine}
-                  className={`pointer-events-auto ${BUTTON_PRIMARY}`}
-                >
-                  운동 완료
-                </button>
-              )}
+              {rest.run ? (
+                <RestPanel
+                  run={rest.run}
+                  finished={rest.finished}
+                  onAdjust={rest.adjust}
+                  onSkip={rest.skip}
+                  onElapsed={rest.elapse}
+                />
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {restSeconds != null ? (
+                  <StartRestButton seconds={restSeconds} onStart={() => rest.start(restSeconds)} />
+                ) : null}
+                {!showFinish ? null : completeMessage ? (
+                  <p
+                    role="status"
+                    data-testid={
+                      completeResult === 'recorded' ? 'workout-recorded' : 'workout-not-recorded'
+                    }
+                    className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-accent backdrop-blur-sm"
+                  >
+                    {completeMessage}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="finish-workout"
+                    onClick={completeRoutine}
+                    className={`pointer-events-auto ${BUTTON_PRIMARY}`}
+                  >
+                    운동 완료
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@ function routine(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
     owner: 'u1',
     dirty: false,
     syncError: null,
+    syncedPosition: null,
     ...over,
   }
 }

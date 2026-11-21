@@ -1,3 +1,4 @@
+import { clampChars } from '@/lib/text'
 import type { ShortVideo } from '@/lib/types'
 import { clampRest, normalizeRest, suggestRestSeconds } from './rest'
 
@@ -38,6 +39,9 @@ export type Routine = {
  * - owner: 누구의 루틴인가. null 은 로그인하지 않은 이 브라우저의 루틴.
  * - deletedAt: 묘비. 로그인 중 지운 루틴은 서버에 삭제를 전해야 하므로 바로 빼지 않는다.
  * - dirty: 서버에 아직 올리지 않은 변경이 있다.
+ * - syncedPosition: 서버 행에 지금 적힌 position. 모르면 null. 손님 루틴 가져오기·되돌리기로
+ *   배열 순서가 바뀌면 dirty 가 아닌 루틴의 자리도 밀린다 — 이 값과 지금 자리가 다르면
+ *   동기화가 그 루틴도 다시 올려 기기마다 순서가 같게 한다.
  */
 export type StoredRoutine = Routine & {
   updatedAt: number
@@ -45,6 +49,7 @@ export type StoredRoutine = Routine & {
   owner: string | null
   dirty: boolean
   syncError: string | null
+  syncedPosition: number | null
 }
 
 function isBrowser(): boolean {
@@ -59,13 +64,9 @@ const EMPTY_STORED: StoredRoutine[] = []
 /** 지금 화면의 주인. 로그인 상태는 이 파일이 모른다 — 인증 쪽이 알려 준다. */
 let activeOwner: string | null = null
 
-/**
- * 코드 포인트 단위로 자른다. slice 는 UTF-16 단위라 경계에 걸린 이모지를 반쪽(외톨이 서로게이트)
- * 으로 남기고, 서버의 char_length 는 코드 포인트를 세므로 길이 판단도 어긋난다.
- */
+/** 루틴 이름을 상한까지 자른다(코드 포인트 단위 — lib/text.ts). */
 export function clampName(name: string, max: number = LIMITS.nameLength): string {
-  const chars = Array.from(name)
-  return chars.length <= max ? name : chars.slice(0, max).join('')
+  return clampChars(name, max)
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -104,6 +105,10 @@ function toStored(value: unknown): StoredRoutine | null {
     owner: typeof value.owner === 'string' ? value.owner : null,
     dirty: value.dirty === true,
     syncError: typeof value.syncError === 'string' ? value.syncError : null,
+    syncedPosition:
+      typeof value.syncedPosition === 'number' && Number.isInteger(value.syncedPosition)
+        ? value.syncedPosition
+        : null,
   }
 }
 
@@ -331,6 +336,7 @@ export function createRoutine(name: string): Routine | null {
     items: [],
     owner: activeOwner,
     deletedAt: null,
+    syncedPosition: null,
     ...touched(),
   }
   commit([...stored, routine])
@@ -403,6 +409,8 @@ export function restoreRoutine(
     items: routine.items,
     owner: activeOwner,
     deletedAt: null,
+    // 묘비를 되살리면 서버 행은 그대로이므로 그 자리를 이어받는다.
+    syncedPosition: existing !== -1 ? stored[existing].syncedPosition : null,
     ...touched(),
   }
 
@@ -506,4 +514,47 @@ export function resetRoutinesForTest(): void {
   cachedVisibleOwner = null
   cachedVisible = EMPTY
   notify()
+}
+
+/**
+ * 동기화가 기억하는 것 두 가지. 저장 매체를 아는 코드는 이 파일에만 두므로 여기에 있다.
+ * - last-user: 마지막으로 본 로그인 사용자. 앱이 꺼져 있는 동안 세션이 끝났어도 다음 실행 때
+ *   "누가 나갔는지" 알아야 그 사람의 루틴을 이 브라우저에서 치울 수 있다.
+ * - kept-guest:<id>: 이 사용자가 손님 루틴을 "두기" 로 골랐다. 같은 기기에서 다시 묻지 않는다.
+ * 저장소 접근이 던지는 환경(사파리 시크릿 등)에서는 기억하지 못할 뿐 앱은 계속 돈다.
+ */
+const LAST_USER_KEY = 'health-shorts:sync:last-user'
+const KEPT_GUEST_PREFIX = 'health-shorts:sync:kept-guest:'
+
+function readMemo(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeMemo(key: string, value: string | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(key)
+    else window.localStorage.setItem(key, value)
+  } catch {
+    // 위 설명대로 — 기억하지 못하면 다음 실행에서 한 번 더 묻거나 치울 뿐이다.
+  }
+}
+
+export function readLastUser(): string | null {
+  return readMemo(LAST_USER_KEY)
+}
+
+export function writeLastUser(userId: string | null): void {
+  writeMemo(LAST_USER_KEY, userId)
+}
+
+export function isGuestKept(userId: string): boolean {
+  return readMemo(KEPT_GUEST_PREFIX + userId) !== null
+}
+
+export function markGuestKept(userId: string): void {
+  writeMemo(KEPT_GUEST_PREFIX + userId, '1')
 }

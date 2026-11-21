@@ -1,4 +1,4 @@
-import type { WorkoutLog } from '@/features/workouts/workouts'
+import { WORKOUT_LIMITS, type WorkoutLog } from '@/features/workouts/workouts'
 import type { StoredRoutine } from './routines'
 
 /**
@@ -16,8 +16,13 @@ import type { StoredRoutine } from './routines'
  * - 단, 서버에 없는 로컬 **묘비**가 dirty 가 아니면 버린다. 서버가 이미 받아 둔 묘비를 30일
  *   뒤 정리한 것이다. 다시 dirty 로 올리면 그 push 가 또 정리를 부르고, 다음 당기기에서 또
  *   없어져 다시 올리는 왕복이 끝없이 돈다. 아직 못 올린(dirty) 묘비는 남겨 올린다.
+ * - 서버에 없는 로컬 루틴의 지난 거절(syncError)은 지운다. 상한(200개) 거절은 다른 기기에서
+ *   지웠거나 묘비가 정리되면 풀리는데, 거절을 남겨 두면 그 루틴을 다시 고치기 전에는 영영 올리지
+ *   않는다. 아직도 거절될 내용이면 당길 때마다 한 번씩만 다시 거절된다.
  * - 다른 주인(손님 포함)의 로컬 루틴은 이 계정의 일이 아니므로 그대로 둔다.
- * - 순서는 로컬을 유지하고, 서버에만 있는 것은 createdAt 순으로 뒤에 붙인다.
+ * - 순서는 로컬을 유지하고, 서버에만 있는 것은 서버 순서(position, 같으면 createdAt)로 뒤에 붙인다.
+ * - 서버 행이 있으면 그 position 을 syncedPosition 으로 기억한다 — 로컬 자리와 다르면 다음
+ *   밀기가 자리를 바로잡는다.
  */
 export function mergeRoutines(
   local: StoredRoutine[],
@@ -34,16 +39,22 @@ export function mergeRoutines(
     const theirs = remoteById.get(mine.id)
     if (!theirs) {
       if (mine.deletedAt !== null && !mine.dirty) return null
-      return { ...mine, dirty: true }
+      return { ...mine, dirty: true, syncError: null }
     }
 
-    if (mine.updatedAt > theirs.updatedAt) return { ...mine, dirty: true }
+    if (mine.updatedAt > theirs.updatedAt) {
+      return { ...mine, dirty: true, syncedPosition: theirs.syncedPosition }
+    }
     return { ...theirs, owner, dirty: false, syncError: null }
   })
 
   const remoteOnly = remote
     .filter((routine) => !seen.has(routine.id))
-    .sort((a, b) => a.createdAt - b.createdAt)
+    .sort(
+      (a, b) =>
+        (a.syncedPosition ?? Number.MAX_SAFE_INTEGER) -
+          (b.syncedPosition ?? Number.MAX_SAFE_INTEGER) || a.createdAt - b.createdAt,
+    )
     .map((routine) => ({ ...routine, owner, dirty: false, syncError: null }))
 
   const kept = merged.filter((routine): routine is StoredRoutine => routine !== null)
@@ -104,9 +115,38 @@ export function mergeWorkouts(
   return [...merged, ...remoteOnly]
 }
 
-/** 로그인 전에 남긴 손님 기록을 이 계정으로 가져온다. 올려야 하므로 dirty 다. */
-export function adoptGuestWorkouts(local: WorkoutLog[], owner: string): WorkoutLog[] {
-  return local.map((log) => (log.owner === null ? { ...log, owner, dirty: true } : log))
+/**
+ * 로그인 전에 남긴 손님 기록을 이 계정으로 가져온다. 올려야 하므로 dirty 다.
+ *
+ * 이 계정의 같은 날 기록과 합쳐 하루 상한(20건)을 넘는 손님 기록은 가져오지 않고 버리며, 몇 건인지
+ * 돌려준다. 그대로 올리면 서버가 거절하고 그 기록은 지워진다 — 미리 세어 사용자에게 알리는 편이
+ * 낫다. 손님 기록으로 남기면 가져오기 시트가 같은 것을 끝없이 다시 묻는다.
+ * (서버에만 있고 아직 당겨 오지 않은 기록은 셀 수 없다. 그 차이는 밀기의 거절 알림이 맡는다.)
+ */
+export function adoptGuestWorkouts(
+  local: WorkoutLog[],
+  owner: string,
+): { workouts: WorkoutLog[]; dropped: number } {
+  const perDay = new Map<string, number>()
+  for (const log of local) {
+    if (log.owner === owner) perDay.set(log.localDate, (perDay.get(log.localDate) ?? 0) + 1)
+  }
+  let dropped = 0
+  const workouts: WorkoutLog[] = []
+  for (const log of local) {
+    if (log.owner !== null) {
+      workouts.push(log)
+      continue
+    }
+    const count = perDay.get(log.localDate) ?? 0
+    if (count >= WORKOUT_LIMITS.perDay) {
+      dropped += 1
+      continue
+    }
+    perDay.set(log.localDate, count + 1)
+    workouts.push({ ...log, owner, dirty: true })
+  }
+  return { workouts, dropped }
 }
 
 /**

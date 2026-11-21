@@ -9,13 +9,16 @@ import {
   loadStoredWorkouts,
   replaceStoredWorkouts,
   subscribeWorkouts,
+  WORKOUT_LIMITS,
   type WorkoutLog,
 } from '@/features/workouts/workouts'
 import { adoptGuestRoutines, adoptGuestWorkouts } from './merge'
 import { fetchRoutines, fetchWorkouts, pushRoutine, pushWorkout } from './routineSync'
 import {
   getActiveOwner,
+  isGuestKept,
   loadStoredRoutines,
+  markGuestKept,
   markOwnerResolved,
   onActiveOwnerChange,
   replaceStoredRoutines,
@@ -24,7 +27,7 @@ import {
 } from './routines'
 import { startSync, type SyncAuth, type SyncIo } from './syncEngine'
 import { guestPrompt, userFromGetUser } from './syncPlan'
-import { isGuestKept, markGuestKept, retrySync } from './syncStatus'
+import { reportDroppedWorkouts, retrySync } from './syncStatus'
 
 /**
  * 로그인 사용자의 루틴·기록을 서버와 맞춘다. 루트 레이아웃에 붙는다 — 피드에서도 담기와 기록이
@@ -132,7 +135,9 @@ function AdoptGuestSheet() {
     // 그사이 다른 계정으로 바뀌었으면 손님 것을 엉뚱한 계정에 넣지 않는다.
     if (getActiveOwner() !== userId) return
     replaceStoredRoutines(adoptGuestRoutines(loadStoredRoutines(), userId))
-    replaceStoredWorkouts(adoptGuestWorkouts(loadStoredWorkouts(), userId))
+    const { workouts, dropped } = adoptGuestWorkouts(loadStoredWorkouts(), userId)
+    replaceStoredWorkouts(workouts)
+    reportDroppedWorkouts(dropped, `운동 기록은 하루 ${WORKOUT_LIMITS.perDay}건까지 저장할 수 있어요`)
     retrySync()
   }
 

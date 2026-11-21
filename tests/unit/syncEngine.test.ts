@@ -50,6 +50,7 @@ function routine(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
     owner: 'u1',
     dirty: false,
     syncError: null,
+    syncedPosition: null,
     ...over,
   }
 }
@@ -459,5 +460,60 @@ describe('flushBeforeSignOut', () => {
     const result = flushBeforeSignOut()
     await flush()
     await expect(result).resolves.toBeUndefined()
+  })
+})
+
+describe('startSync — 점검에서 나온 경우', () => {
+  it('당기기가 끝나지 않아도 로그아웃하면 화면 주인은 곧바로 바뀐다', async () => {
+    const { startSync, getActiveOwner, createRoutine } = await freshEngine()
+    seed([routine('a')], [], 'u1')
+    const server = fakeServer()
+    // 느린 연결 — 당기기가 끝나지 않는다.
+    server.holdUntil(new Promise(() => {}))
+    const { auth, emit } = fakeAuth('u1')
+    stop = startSync(auth, server.io)
+    await flush()
+    expect(getActiveOwner()).toBe('u1')
+
+    emit(null)
+    expect(getActiveOwner()).toBeNull()
+    const created = createRoutine('손님 루틴')!
+    expect(storedRoutines().find((r) => r.id === created.id)?.owner).toBeNull()
+  })
+
+  it('상한으로 거절된 루틴은 다른 루틴을 지우면 다시 올라간다', async () => {
+    const { startSync, deleteRoutine } = await freshEngine()
+    seed([routine('y', { syncedPosition: 0 }), routine('x', { dirty: true })], [], 'u1')
+    const server = fakeServer()
+    server.routines.set('u1', [routine('y', { syncedPosition: 0 })])
+    server.willRespond({ ok: false, kind: 'rejected', reason: '루틴은 200개까지 저장할 수 있어요' })
+    stop = startSync(fakeAuth('u1').auth, server.io)
+    await flush()
+    expect(storedRoutines().find((r) => r.id === 'x')?.syncError).not.toBeNull()
+
+    deleteRoutine('y')
+    await flush(500)
+    expect(server.pushes).toEqual(['u1:x', 'u1:y', 'u1:x'])
+    expect(storedRoutines().find((r) => r.id === 'x')).toMatchObject({
+      dirty: false,
+      syncError: null,
+    })
+  })
+
+  it('서버가 거절해 지운 기록은 몇 건인지 알린다 — 조용히 사라지지 않게', async () => {
+    const { startSync, getDroppedWorkouts } = await freshEngine()
+    seed([], [log('w', { dirty: true }), log('v', { dirty: true })], 'u1')
+    const server = fakeServer()
+    server.willRespond(
+      { ok: false, kind: 'rejected', reason: '운동 기록은 하루 20건까지 저장할 수 있어요' },
+      { ok: false, kind: 'rejected', reason: '운동 기록은 하루 20건까지 저장할 수 있어요' },
+    )
+    stop = startSync(fakeAuth('u1').auth, server.io)
+    await flush()
+    expect(storedWorkouts()).toEqual([])
+    expect(getDroppedWorkouts()).toEqual({
+      count: 2,
+      reason: '운동 기록은 하루 20건까지 저장할 수 있어요',
+    })
   })
 })

@@ -6,6 +6,7 @@ import { recordView } from '@/features/history/history'
 import { iconButtonClass } from '@/components/ui/IconButton'
 import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
+import { autoCompletesOnEnd } from '@/features/feed/routineEnd'
 import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
 import { RestPanel, StartRestButton, useRestRun } from '@/features/routines/RestTimerControls'
 import type { ShortVideo } from '@/lib/types'
@@ -118,10 +119,12 @@ export default function ShortsFeed({
   const handleEnded = useCallback(
     (index: number) => {
       setEndedIndex(index)
-      // 마지막 운동이 끝까지 재생됐다 = 루틴을 끝냈다. 버튼을 누르지 않아도 기록한다.
-      if (routineMode && index === lastIndex) completeRoutine()
+      // 처음부터 재생한 루틴의 마지막 운동이 끝까지 재생됐다 = 루틴을 끝냈다. 버튼 없이도 기록한다.
+      if (autoCompletesOnEnd({ routineMode, startIndex: initialIndex, index, lastIndex })) {
+        completeRoutine()
+      }
     },
-    [routineMode, lastIndex, completeRoutine],
+    [routineMode, initialIndex, lastIndex, completeRoutine],
   )
 
   const goTo = useCallback(

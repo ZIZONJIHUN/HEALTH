@@ -14,9 +14,11 @@ import {
 import type { PushResult } from './routineSync'
 import {
   loadStoredRoutines,
+  readLastUser,
   replaceStoredRoutines,
   setActiveOwner,
   subscribeRoutines,
+  writeLastUser,
   type StoredRoutine,
 } from './routines'
 import {
@@ -28,12 +30,7 @@ import {
   shouldPullOnFocus,
   workoutsToPush,
 } from './syncPlan'
-import {
-  readLastUser,
-  registerSignOutFlush,
-  registerSyncRunner,
-  writeLastUser,
-} from './syncStatus'
+import { registerSignOutFlush, registerSyncRunner, reportDroppedWorkouts } from './syncStatus'
 
 /**
  * 동기화 엔진 — 인증 변화·저장소 변경·포커스·타이머를 받아 당기기와 밀기를 돌린다.
@@ -79,6 +76,11 @@ function withinFlushLimit(work: Promise<unknown>): Promise<void> {
   ]).finally(() => clearTimeout(timer))
 }
 
+/** 한 바퀴 안에서 같은 판을 두 번 보내지 않으려고 쓰는 열쇠. */
+function versionKey(routine: StoredRoutine, position: number): string {
+  return `${routine.id}|${routine.updatedAt}|${routine.deletedAt}|${position}`
+}
+
 export function startSync(auth: SyncAuth, io: SyncIo): () => void {
   let disposed = false
   /** undefined: 아직 모름. 알기 전에는 아무것도 하지 않는다 — 모름을 로그아웃으로 읽으면 치워 버린다. */
@@ -105,15 +107,26 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
   /**
    * owner 의 dirty 를 하나씩 민다(같은 주인에게 동시에 두 요청을 보내지 않는다).
    * 일시 실패가 나면 거기서 멈춘다 — 오프라인이면 나머지도 같은 결과다. 다 됐으면 true.
+   *
+   * 올릴 목록은 한 건마다 다시 계산한다. 묘비가 올라가면 상한에 걸렸던 루틴의 거절이 풀리고
+   * (applyRoutinePush), 그 루틴은 이번 바퀴에 바로 올라가야 한다. 같은 판(版)은 한 바퀴에 한 번만
+   * 보낸다 — 결과가 반영되지 않는 경우에도 같은 요청을 되풀이하지 않게.
    */
   async function push(owner: string, stop: Stop): Promise<boolean> {
-    for (const { routine, position } of routinesToPush(loadStoredRoutines(), owner)) {
+    const sent = new Set<string>()
+    for (;;) {
+      const next = routinesToPush(loadStoredRoutines(), owner).find(
+        (entry) => !sent.has(versionKey(entry.routine, entry.position)),
+      )
+      if (!next) break
+      const { routine, position } = next
+      sent.add(versionKey(routine, position))
       if (stop()) return false
       const result = await io.pushRoutine(owner, routine, position)
       if (stop()) return false
       const stored = loadStoredRoutines()
-      const next = applyRoutinePush(stored, routine, result)
-      if (next !== stored) quietly(() => replaceStoredRoutines(next))
+      const applied = applyRoutinePush(stored, routine, result, position)
+      if (applied !== stored) quietly(() => replaceStoredRoutines(applied))
       if (!result.ok && result.kind === 'transient') return false
     }
     for (const log of workoutsToPush(loadStoredWorkouts(), owner)) {
@@ -124,6 +137,8 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
       const next = applyWorkoutPush(stored, log, result)
       if (next !== stored) quietly(() => replaceStoredWorkouts(next))
       if (!result.ok && result.kind === 'transient') return false
+      // 거절된 기록은 저장소에서 지워진다. 흔적이 없으니 알림으로 남긴다 — 조용한 실패 금지.
+      if (!result.ok) reportDroppedWorkouts(1, result.reason)
     }
     return true
   }
@@ -240,6 +255,10 @@ export function startSync(auth: SyncAuth, io: SyncIo): () => void {
   function setUser(userId: string | null): void {
     if (disposed || userId === currentUser) return
     currentUser = userId
+    // 화면 주인은 바퀴를 기다리지 않고 지금 바꾼다. 도는 바퀴가 느린 요청(타임아웃 없음)에 묶여
+    // 있으면 cycle() 이 주인을 바꿀 때까지 이전 사용자의 루틴이 보이고, 그때 만든 루틴이 이전
+    // 사용자 소유로 찍힌다. 저장소만 건드리므로 인증 콜백 안에서 불러도 안전하다.
+    quietly(() => setActiveOwner(userId))
     // 인증 콜백 안에서 곧바로 Supabase 를 부르면 auth 잠금과 엉켜 멈출 수 있다. 한 틱 미룬다.
     setTimeout(kick, 0)
   }

@@ -22,11 +22,31 @@ function make(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
     owner: 'u1',
     dirty: false,
     syncError: null,
+    syncedPosition: null,
     ...over,
   }
 }
 
 describe('mergeRoutines', () => {
+  it('서버에 없는 로컬 루틴의 지난 거절은 당길 때 지운다 — 다른 기기에서 지워 상한이 풀렸을 수 있다', () => {
+    const local = [make('x', { dirty: true, syncError: '루틴은 200개까지 저장할 수 있어요' })]
+    expect(mergeRoutines(local, [], 'u1')[0]).toMatchObject({ dirty: true, syncError: null })
+  })
+
+  it('서버에만 있는 루틴은 서버 순서(position)대로 붙인다', () => {
+    const remote = [
+      make('b', { createdAt: 1, syncedPosition: 1 }),
+      make('a', { createdAt: 2, syncedPosition: 0 }),
+    ]
+    expect(mergeRoutines([], remote, 'u1').map((r) => r.id)).toEqual(['a', 'b'])
+  })
+
+  it('로컬이 이겨도 서버에 지금 있는 자리를 기억한다', () => {
+    const local = [make('a', { updatedAt: 20, dirty: true, syncedPosition: 5 })]
+    const remote = [make('a', { updatedAt: 10, syncedPosition: 2 })]
+    expect(mergeRoutines(local, remote, 'u1')[0].syncedPosition).toBe(2)
+  })
+
   it('나중에 고친 쪽이 이긴다', () => {
     const local = [make('a', { name: '로컬', updatedAt: 10, dirty: true })]
     const remote = [make('a', { name: '서버', updatedAt: 20 })]
@@ -226,10 +246,25 @@ describe('adoptGuestWorkouts', () => {
   it('손님 기록을 이 계정의 dirty 기록으로 바꾸고 남의 것은 둔다', () => {
     const guest = log('g', { owner: null })
     const other = log('x', { owner: 'u2' })
-    expect(adoptGuestWorkouts([guest, other], 'u1')).toEqual([
-      log('g', { owner: 'u1', dirty: true }),
-      other,
-    ])
+    expect(adoptGuestWorkouts([guest, other], 'u1')).toEqual({
+      workouts: [log('g', { owner: 'u1', dirty: true }), other],
+      dropped: 0,
+    })
+  })
+
+  it('계정 기록과 합쳐 하루 상한을 넘는 손님 기록은 가져오지 않고 몇 건인지 알려 준다', () => {
+    const day = '2026-11-10'
+    const mine = Array.from({ length: 19 }, (_, i) => log(`m${i}`, { localDate: day }))
+    const guests = [
+      log('g1', { owner: null, localDate: day }),
+      log('g2', { owner: null, localDate: day }),
+      log('g3', { owner: null, localDate: '2026-11-11' }),
+      log('g4', { owner: null, localDate: day }),
+    ]
+    const { workouts, dropped } = adoptGuestWorkouts([...mine, ...guests], 'u1')
+    expect(dropped).toBe(2)
+    expect(workouts.filter((l) => l.owner === null)).toEqual([])
+    expect(workouts.filter((l) => l.id.startsWith('g')).map((l) => l.id)).toEqual(['g1', 'g3'])
   })
 })
 

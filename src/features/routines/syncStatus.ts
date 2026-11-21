@@ -166,44 +166,43 @@ export function registerSignOutFlush(flush: () => Promise<void>): () => void {
 }
 
 /**
- * 컨트롤러가 기억하는 것 두 가지.
- * - last-user: 마지막으로 본 로그인 사용자. 앱이 꺼져 있는 동안 세션이 끝났어도 다음 실행 때
- *   "누가 나갔는지" 알아야 그 사람의 루틴을 이 브라우저에서 치울 수 있다.
- * - kept-guest:<id>: 이 사용자가 손님 루틴을 "두기" 로 골랐다. 같은 기기에서 다시 묻지 않는다.
- * 저장소 접근이 던지는 환경(사파리 시크릿 등)에서는 기억하지 못할 뿐 앱은 계속 돈다.
+ * 서버가 거절해 지운 운동 기록 알림. 기록은 거절되면 저장소에서 지우므로(applyWorkoutPush)
+ * 저장소에서 유도할 흔적이 없다 — 따로 들지 않으면 기록이 조용히 사라진다(설계 4.5).
+ * 손님 기록을 가져올 때 하루 상한으로 뺀 것도 여기로 알린다. 새로고침하면 사라지는 메모리
+ * 값이다: 알리는 것이 목적이고, 사용자가 확인하면 닫는다.
  */
-const LAST_USER_KEY = 'health-shorts:sync:last-user'
-const KEPT_GUEST_PREFIX = 'health-shorts:sync:kept-guest:'
+export type DroppedWorkouts = { count: number; reason: string } | null
 
-function read(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key)
-  } catch {
-    return null
+let dropped: DroppedWorkouts = null
+const droppedListeners = new Set<() => void>()
+
+function notifyDropped(): void {
+  for (const listener of droppedListeners) listener()
+}
+
+export function reportDroppedWorkouts(count: number, reason: string): void {
+  if (count <= 0) return
+  dropped = { count: (dropped?.count ?? 0) + count, reason }
+  notifyDropped()
+}
+
+export function dismissDroppedWorkouts(): void {
+  if (dropped === null) return
+  dropped = null
+  notifyDropped()
+}
+
+export function getDroppedWorkouts(): DroppedWorkouts {
+  return dropped
+}
+
+function subscribeDropped(listener: () => void): () => void {
+  droppedListeners.add(listener)
+  return () => {
+    droppedListeners.delete(listener)
   }
 }
 
-function write(key: string, value: string | null): void {
-  try {
-    if (value === null) window.localStorage.removeItem(key)
-    else window.localStorage.setItem(key, value)
-  } catch {
-    // 위 설명대로 — 기억하지 못하면 다음 실행에서 한 번 더 묻거나 치울 뿐이다.
-  }
-}
-
-export function readLastUser(): string | null {
-  return read(LAST_USER_KEY)
-}
-
-export function writeLastUser(userId: string | null): void {
-  write(LAST_USER_KEY, userId)
-}
-
-export function isGuestKept(userId: string): boolean {
-  return read(KEPT_GUEST_PREFIX + userId) !== null
-}
-
-export function markGuestKept(userId: string): void {
-  write(KEPT_GUEST_PREFIX + userId, '1')
+export function useDroppedWorkouts(): DroppedWorkouts {
+  return useSyncExternalStore(subscribeDropped, getDroppedWorkouts, () => null)
 }

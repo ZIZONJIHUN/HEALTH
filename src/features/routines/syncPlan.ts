@@ -45,8 +45,11 @@ export function shouldPullOnFocus(lastPullAt: number | null, now: number): boole
 /**
  * 올릴 루틴과 그 position. position 은 이 주인의 루틴(묘비 포함) 사이에서의 순서다 — 다른
  * 주인·손님 루틴이 끼어 있어도 서버의 순서는 이 계정의 것만으로 매긴다.
+ * dirty 가 아니어도 서버 행의 자리(syncedPosition)와 지금 자리가 다르면 올린다. 손님 루틴
+ * 가져오기·되돌리기가 앞에 끼면 뒤 루틴들의 자리가 밀리는데, 바뀐 루틴만 올리면 서버에 같은
+ * position 이 겹쳐 다른 기기의 순서가 달라진다. 서버 자리를 모르면(null) 다음 당기기가 알려 준다.
  * syncError 가 있는 루틴은 뺀다. 표가 거절한 것은 다시 보내도 같은 거절이라 매번 같은 요청을
- * 보내며 돈다. 사용자가 고치면 routines.ts 가 syncError 를 지우므로 그때 다시 올라간다.
+ * 보내며 돈다. 사용자가 고치거나, 당기기·묘비 밀기로 상한이 풀렸을 수 있을 때 지워진다.
  */
 export function routinesToPush(
   stored: StoredRoutine[],
@@ -55,7 +58,12 @@ export function routinesToPush(
   return stored
     .filter((routine) => routine.owner === owner)
     .map((routine, position) => ({ routine, position }))
-    .filter(({ routine }) => routine.dirty && routine.syncError === null)
+    .filter(
+      ({ routine, position }) =>
+        routine.syncError === null &&
+        (routine.dirty ||
+          (routine.syncedPosition !== null && routine.syncedPosition !== position)),
+    )
 }
 
 export function workoutsToPush(stored: WorkoutLog[], owner: string): WorkoutLog[] {
@@ -88,11 +96,16 @@ function sameVersion(a: StoredRoutine, b: StoredRoutine): boolean {
  * 요청이 오가는 동안 사용자가 같은 루틴을 다시 고쳤을 수 있다. 그때 ok 로 dirty 를 끄면 새
  * 변경이 영영 올라가지 않고, rejected 를 붙이면 이미 고친 내용에 지난 거절이 남는다. 그래서
  * 올린 판이 그대로 있을 때만 반영한다 — 아니면 새 판이 dirty 로 남아 다음 밀기가 올린다.
+ *
+ * ok 면 올린 position 을 syncedPosition 으로 기억한다. 묘비가 올라가면 같은 주인의 다른 거절을
+ * 지운다 — 루틴 하나를 지웠으니 200개 상한 거절이 풀렸을 수 있다. 상한이 아닌 거절이면 한 번 더
+ * 거절될 뿐이고, 묘비 밀기는 사용자가 지울 때만 생기므로 끝없이 돌지 않는다.
  */
 export function applyRoutinePush(
   stored: StoredRoutine[],
   pushed: StoredRoutine,
   result: PushResult,
+  position?: number,
 ): StoredRoutine[] {
   if (!result.ok && result.kind === 'transient') return stored
   const index = stored.findIndex((routine) => routine.id === pushed.id)
@@ -106,9 +119,23 @@ export function applyRoutinePush(
   }
 
   const next = stored.slice()
-  next[index] = result.ok
-    ? { ...stored[index], dirty: false, syncError: null }
-    : { ...stored[index], dirty: true, syncError: result.reason }
+  if (!result.ok) {
+    next[index] = { ...stored[index], dirty: true, syncError: result.reason }
+    return next
+  }
+  next[index] = {
+    ...stored[index],
+    dirty: false,
+    syncError: null,
+    syncedPosition: position ?? stored[index].syncedPosition,
+  }
+  if (pushed.deletedAt !== null) {
+    for (let i = 0; i < next.length; i += 1) {
+      if (next[i].owner === pushed.owner && next[i].syncError !== null) {
+        next[i] = { ...next[i], syncError: null }
+      }
+    }
+  }
   return next
 }
 

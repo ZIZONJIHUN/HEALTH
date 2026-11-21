@@ -24,6 +24,7 @@ function routine(id: string, over: Partial<StoredRoutine> = {}): StoredRoutine {
     owner: 'u1',
     dirty: false,
     syncError: null,
+    syncedPosition: null,
     ...over,
   }
 }
@@ -248,5 +249,48 @@ describe('userFromGetUser', () => {
     expect(userFromGetUser(null, { name: 'AuthApiError', status: 500 })).toBe('unknown')
     expect(userFromGetUser(null, { name: 'AuthUnknownError' })).toBe('unknown')
     expect(userFromGetUser(null, { name: 'AuthApiError', status: 400 })).toBe('unknown')
+  })
+})
+
+describe('routinesToPush — 순서', () => {
+  it('서버에 올린 자리와 지금 자리가 다르면 dirty 가 아니어도 올린다', () => {
+    // 가져온 손님 루틴이 앞에 끼면 계정 루틴의 자리가 밀린다. 밀린 자리도 서버에 가야 한다.
+    const stored = [
+      routine('g', { dirty: true }),
+      routine('a', { syncedPosition: 0 }),
+      routine('b', { syncedPosition: 1 }),
+    ]
+    expect(routinesToPush(stored, 'u1').map((p) => [p.routine.id, p.position])).toEqual([
+      ['g', 0],
+      ['a', 1],
+      ['b', 2],
+    ])
+  })
+
+  it('자리가 같거나 서버 자리를 모르면(null) 순서 때문에 올리지 않는다', () => {
+    const stored = [routine('a', { syncedPosition: 0 }), routine('b', { syncedPosition: null })]
+    expect(routinesToPush(stored, 'u1')).toEqual([])
+  })
+
+  it('거절된 루틴은 자리가 달라도 올리지 않는다', () => {
+    const stored = [routine('a', { syncedPosition: 3, syncError: 'x', dirty: true })]
+    expect(routinesToPush(stored, 'u1')).toEqual([])
+  })
+})
+
+describe('applyRoutinePush — 자리와 상한', () => {
+  it('ok 면 올린 자리를 기억한다', () => {
+    const pushed = routine('a', { dirty: true })
+    const [after] = applyRoutinePush([pushed], pushed, { ok: true }, 3)
+    expect(after.syncedPosition).toBe(3)
+  })
+
+  it('묘비가 올라가면 같은 주인의 거절된 루틴을 다시 올릴 수 있게 한다 — 상한이 풀렸을 수 있다', () => {
+    const tomb = routine('t', { deletedAt: 5, dirty: true })
+    const stuck = routine('x', { dirty: true, syncError: '루틴은 200개까지 저장할 수 있어요' })
+    const others = routine('y', { owner: 'u2', dirty: true, syncError: 'e' })
+    const next = applyRoutinePush([tomb, stuck, others], tomb, { ok: true })
+    expect(next[1]).toMatchObject({ dirty: true, syncError: null })
+    expect(next[2].syncError).toBe('e')
   })
 })

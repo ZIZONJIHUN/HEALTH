@@ -1,7 +1,12 @@
-'use client'
+"use client";
 
-import Link from 'next/link'
-import { retrySync, useSyncStatus } from './syncStatus'
+import Link from "next/link";
+import {
+  dismissDroppedWorkouts,
+  retrySync,
+  useDroppedWorkouts,
+  useSyncStatus,
+} from "./syncStatus";
 
 /**
  * 루틴이 지금 어디에 저장돼 있는지 한 줄로 말한다.
@@ -9,36 +14,60 @@ import { retrySync, useSyncStatus } from './syncStatus'
  * 조용한 실패를 두지 않으려고 pending·rejected 도 숨기지 않고 보여 준다.
  */
 export default function SyncStatusLine() {
-  const status = useSyncStatus()
+  const status = useSyncStatus();
+  const dropped = useDroppedWorkouts();
 
   return (
-    <p data-testid="sync-status" className="mt-1 text-xs text-dim">
-      {status.state === 'local' && (
-        <>
-          루틴은 이 브라우저에만 저장돼요.{' '}
-          <Link href="/account" className="text-accent underline-offset-2 hover:underline">
-            로그인하면 다른 기기에서도 볼 수 있어요
-          </Link>
-        </>
-      )}
-      {status.state === 'synced' && '계정에 저장돼요. 다른 기기에서도 보여요.'}
-      {status.state === 'pending' && (
-        <>
-          아직 계정에 저장되지 않았어요{' '}
+    <>
+      <p data-testid="sync-status" className="mt-1 text-xs text-dim">
+        {status.state === "local" && (
+          <>
+            루틴은 이 브라우저에만 저장돼요.{" "}
+            <Link
+              href="/account"
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              로그인하면 다른 기기에서도 볼 수 있어요
+            </Link>
+          </>
+        )}
+        {status.state === "synced" &&
+          "계정에 저장돼요. 다른 기기에서도 보여요."}
+        {status.state === "pending" && (
+          <>
+            아직 계정에 저장되지 않았어요{" "}
+            <button
+              type="button"
+              onClick={retrySync}
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              다시 시도
+            </button>
+          </>
+        )}
+        {status.state === "rejected" && (
+          <span className="text-danger">
+            {status.names.join(", ")} 루틴은 계정에 저장할 수 없어요 ·{" "}
+            {status.reason}
+          </span>
+        )}
+      </p>
+      {dropped && (
+        <p
+          role="status"
+          data-testid="dropped-workouts"
+          className="mt-1 text-xs text-danger"
+        >
+          운동 기록 {dropped.count}건은 저장하지 못했어요 · {dropped.reason}{" "}
           <button
             type="button"
-            onClick={retrySync}
+            onClick={dismissDroppedWorkouts}
             className="text-accent underline-offset-2 hover:underline"
           >
-            다시 시도
+            확인
           </button>
-        </>
+        </p>
       )}
-      {status.state === 'rejected' && (
-        <span className="text-danger">
-          {status.names.join(', ')} 루틴은 계정에 저장할 수 없어요 · {status.reason}
-        </span>
-      )}
-    </p>
-  )
+    </>
+  );
 }

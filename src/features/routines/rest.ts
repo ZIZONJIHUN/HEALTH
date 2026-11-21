@@ -27,6 +27,18 @@ const SHORT_KEYWORDS = [
   'plank', 'burpee', 'mountainclimber', 'crunch', 'jumpingjack', 'jumprope', 'stretching',
 ]
 
+/**
+ * 키워드를 품고 있지만 운동이 아닌 낱말. 공백을 빼고 부분 문자열로 비교하므로 '플로우'가 '로우'에,
+ * '피지컬'이 '컬'에, 'throw'가 'row'에 걸린다. 비교 전에 이 낱말들을 지운다 — 짧은 키워드를
+ * 단어 경계로만 맞추면 '바벨로우'·'덤벨컬'처럼 붙여 쓴 진짜 운동을 놓친다.
+ */
+const NOT_EXERCISE = [
+  '플로우', '팔로우', '슬로우', '글로우', '옐로우', '할로우',
+  '피지컬', '컬러', '컬처', '로컬', '스컬프',
+  'throw', 'grow', 'arrow', 'narrow', 'brow', 'crow', 'borrow', 'tomorrow', 'sorrow', 'burrow',
+  'furrow', 'marrow', 'butterfly', 'firefly', 'dragonfly',
+]
+
 // 여러 분류에 걸리면 긴 쪽이 이기므로 90 → 60 → 30 순으로 보고 처음 걸린 값을 쓴다.
 const RULES: readonly (readonly [Rest, readonly string[]])[] = [
   [90, LONG_KEYWORDS],
@@ -36,7 +48,11 @@ const RULES: readonly (readonly [Rest, readonly string[]])[] = [
 
 /** 영상 제목으로 휴식 시간을 고른다. 판단할 수 없으면 60초. */
 export function suggestRestSeconds(title: string): Rest {
-  const t = title.toLowerCase().replace(/\s+/g, '')
+  // 지운 자리는 구분자로 남긴다 — 그냥 붙이면 앞뒤가 이어져 새 키워드가 생길 수 있다.
+  const t = NOT_EXERCISE.reduce(
+    (text, word) => text.split(word).join('|'),
+    title.toLowerCase().replace(/\s+/g, ''),
+  )
   for (const [seconds, keywords] of RULES) {
     if (keywords.some((k) => t.includes(k))) return seconds
   }

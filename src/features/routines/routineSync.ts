@@ -63,6 +63,7 @@ function toStored(row: RoutineRow, userId: string): StoredRoutine {
     // 서버에서 막 읽은 것이므로 올릴 변경도, 남은 오류도 없다.
     dirty: false,
     syncError: null,
+    syncedPosition: row.position,
   }
 }
 

@@ -84,3 +84,23 @@ describe('restAt', () => {
     expect(DEFAULT_REST_SECONDS).toBe(suggestRestSeconds('알 수 없는 제목'))
   })
 })
+
+describe('suggestRestSeconds — 다른 낱말 속에 든 키워드', () => {
+  it.each([
+    ['요가 플로우 스트레칭', 30],
+    ['피지컬 갤러리 스트레칭', 30],
+    ['슬로우 버피', 30],
+    ['Medicine ball throw', DEFAULT_REST_SECONDS],
+    ['Narrow grip', DEFAULT_REST_SECONDS],
+    ['컬러 밴드 사용법', DEFAULT_REST_SECONDS],
+  ])('%s → %i', (title, seconds) => expect(suggestRestSeconds(title)).toBe(seconds))
+
+  it.each([
+    ['바벨 로우', 90],
+    ['Barbell Row', 90],
+    ['Upright rows', 90],
+    ['덤벨 컬', 60],
+  ])('진짜 운동은 그대로 %s → %i', (title, seconds) =>
+    expect(suggestRestSeconds(title)).toBe(seconds),
+  )
+})

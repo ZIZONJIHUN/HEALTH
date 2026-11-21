@@ -39,6 +39,7 @@ function make(over: Partial<StoredRoutine> = {}): StoredRoutine {
     owner: 'u1',
     dirty: true,
     syncError: '이전 오류',
+    syncedPosition: null,
     ...over,
   }
 }
@@ -85,6 +86,7 @@ describe('fetchRoutines', () => {
         owner: 'u1',
         dirty: false,
         syncError: null,
+        syncedPosition: 0,
       },
       {
         id: 'r2',
@@ -96,6 +98,7 @@ describe('fetchRoutines', () => {
         owner: 'u1',
         dirty: false,
         syncError: null,
+        syncedPosition: 1,
       },
     ])
   })

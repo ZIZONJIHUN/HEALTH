@@ -26,6 +26,12 @@ function supabaseOrigin(rawUrl: string | undefined): string | null {
   }
 }
 
+/**
+ * 이 앱을 iframe 으로 넣어도 되는 곳. 자기 자신과 Lectio 모닥불(작품 게시판)만 열고
+ * 나머지 사이트는 계속 막는다 (클릭재킹 차단).
+ */
+export const FRAME_ANCESTORS = "frame-ancestors 'self' https://lectio.kr https://lectio.co.kr"
+
 export function buildCsp(supabaseUrl: string | undefined): string {
   const origin = supabaseOrigin(supabaseUrl)
 
@@ -47,7 +53,7 @@ export function buildCsp(supabaseUrl: string | undefined): string {
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
-    "frame-ancestors 'none'",
+    FRAME_ANCESTORS,
   ].join('; ')
 }
 
@@ -84,8 +90,9 @@ const nextConfig: NextConfig = {
           },
 
           // 아래 넷은 부작용이 없어 처음부터 강제한다.
-          // 이 앱은 어떤 화면도 iframe 안에서 쓰일 일이 없다 (클릭재킹 차단).
-          { key: 'X-Frame-Options', value: 'DENY' },
+          // iframe 은 FRAME_ANCESTORS 에 적은 곳에서만 열린다. X-Frame-Options 는 허용할 곳을
+          // 적을 수 없어 쓰지 않는다 (DENY 면 Lectio 모닥불에서도 화면이 막힌다).
+          { key: 'Content-Security-Policy', value: FRAME_ANCESTORS },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           {

@@ -30,7 +30,7 @@ function supabaseOrigin(rawUrl: string | undefined): string | null {
  * 이 앱을 iframe 으로 넣어도 되는 곳. 자기 자신과 Lectio 모닥불(작품 게시판)만 열고
  * 나머지 사이트는 계속 막는다 (클릭재킹 차단).
  */
-export const FRAME_ANCESTORS = "frame-ancestors 'self' https://lectio.kr https://lectio.co.kr"
+export const FRAME_ANCESTORS = "frame-ancestors 'self' https://lectio.kr https://torch.ai.kr https://lectio.co.kr"
 
 export function buildCsp(supabaseUrl: string | undefined): string {
   const origin = supabaseOrigin(supabaseUrl)

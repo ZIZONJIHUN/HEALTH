@@ -37,7 +37,7 @@ describe('buildCsp', () => {
   it('기존 지시어를 유지한다', () => {
     const csp = buildCsp(undefined)
 
-    expect(csp).toContain("frame-ancestors 'self' https://lectio.kr https://lectio.co.kr")
+    expect(csp).toContain("frame-ancestors 'self' https://lectio.kr https://torch.ai.kr https://lectio.co.kr")
     expect(csp).toContain('https://www.youtube.com')
     expect(csp).toContain('https://i.ytimg.com')
     expect(csp).not.toContain('unsafe-eval')

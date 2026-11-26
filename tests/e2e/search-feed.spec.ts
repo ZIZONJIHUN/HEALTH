@@ -7,7 +7,7 @@ test('보안 헤더가 응답에 붙는다', async ({ page }) => {
 
   // iframe 은 자기 자신과 Lectio 모닥불에서만 열린다. 나머지 사이트는 막는다.
   expect(headers['content-security-policy']).toBe(
-    "frame-ancestors 'self' https://lectio.kr https://lectio.co.kr",
+    "frame-ancestors 'self' https://lectio.kr https://torch.ai.kr https://lectio.co.kr",
   )
   expect(headers['x-frame-options']).toBeUndefined()
   expect(headers['x-content-type-options']).toBe('nosniff')
@@ -15,7 +15,7 @@ test('보안 헤더가 응답에 붙는다', async ({ page }) => {
 
   // 아직 Report-Only 다. 강제로 올릴 때 이 단정을 함께 바꾼다.
   const csp = headers['content-security-policy-report-only']
-  expect(csp).toContain("frame-ancestors 'self' https://lectio.kr https://lectio.co.kr")
+  expect(csp).toContain("frame-ancestors 'self' https://lectio.kr https://torch.ai.kr https://lectio.co.kr")
   // 재생이 이 두 출처에 달려 있다. 빠지면 강제 전환 순간 영상과 썸네일이 전부 죽는다.
   expect(csp).toContain('https://www.youtube.com')
   expect(csp).toContain('https://i.ytimg.com')

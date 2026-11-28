@@ -113,6 +113,44 @@ test('영상을 몇 개 넘긴 뒤에도 뒤로 버튼 한 번에 그리드로 �
   await expect(page).toHaveURL(/\/\?q=/)
 })
 
+test('영상을 몇 개 넘긴 뒤 홈 버튼 한 번에 검색 화면으로 돌아간다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').first().click()
+  await expect(page).toHaveURL(/\/feed/)
+  // 키보드 처리는 하이드레이션 뒤에 붙는다. 그 전에 누른 키는 버려지므로 넘어갈 때까지 다시 누른다.
+  for (const n of [2, 3]) {
+    await expect(async () => {
+      await page.keyboard.press('ArrowDown')
+      await expect(page.getByText(`${n} / 9`)).toBeVisible({ timeout: 1000 })
+    }).toPass()
+  }
+
+  await page.getByTestId('home-button').click()
+  await expect(page).toHaveURL(/\/\?q=/)
+  await expect(page.getByTestId('video-card').first()).toBeVisible()
+})
+
+test('홈 버튼은 그리드의 길이 필터를 지킨 채 돌아간다', async ({ page }) => {
+  // 방문 기록 없이 피드 주소로 바로 들어와도(공유 링크) 같은 조건의 검색 화면으로 간다.
+  await page.goto('/feed?q=스쿼트&len=short&i=0')
+  await page.getByTestId('home-button').click()
+  await expect(page).toHaveURL(/\/\?q=.+&len=short/)
+})
+
+test('루틴 재생의 홈 버튼은 루틴 목록으로 돌아간다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  await page.getByTestId('start-routine').click()
+  await expect(page).toHaveURL(/\/feed\?routine=/)
+  await page.getByTestId('home-button').click()
+  await expect(page).toHaveURL(/\/routines$/)
+})
+
 test('결과가 없으면 추천 검색어를 보여준다', async ({ page }) => {
   await page.goto('/?q=없는운동')
 

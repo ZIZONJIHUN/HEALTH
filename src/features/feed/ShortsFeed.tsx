@@ -209,8 +209,10 @@ export default function ShortsFeed({
         ))}
       </div>
 
+      {/* 폭은 왼쪽 위 뒤로·홈 버튼(약 6.25rem)과 오른쪽 위 쪽수를 피하게 잡는다. 50% 로 두면 좁은
+          휴대폰에서 긴 루틴 이름이 홈 버튼을 덮는다. */}
       {routineMode ? (
-        <p className="pointer-events-none absolute top-3 left-1/2 z-50 max-w-[50%] -translate-x-1/2 truncate rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-accent backdrop-blur-sm">
+        <p className="pointer-events-none absolute top-3 left-1/2 z-50 max-w-[calc(100%-14rem)] -translate-x-1/2 truncate rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-accent backdrop-blur-sm">
           {routineName}
         </p>
       ) : null}

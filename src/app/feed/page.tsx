@@ -1,5 +1,7 @@
 import { notFound } from 'next/navigation'
 import BackButton from '@/features/feed/BackButton'
+import HomeButton from '@/features/feed/HomeButton'
+import { searchHomeHref } from '@/features/feed/homeTarget'
 import RecentFeed from '@/features/history/RecentFeed'
 import RoutineFeed from '@/features/routines/RoutineFeed'
 import ShortsFeed from '@/features/feed/ShortsFeed'
@@ -30,6 +32,7 @@ export default async function FeedPage({
     return (
       <main id="main">
         <BackButton />
+        <HomeButton href="/routines" label="루틴 목록으로" />
         <RoutineFeed routineId={routineId} requestedIndex={requestedIndex} />
       </main>
     )
@@ -40,6 +43,7 @@ export default async function FeedPage({
     return (
       <main id="main">
         <BackButton />
+        <HomeButton href="/" label="홈으로" />
         <RecentFeed requestedIndex={requestedIndex} />
       </main>
     )
@@ -62,6 +66,14 @@ export default async function FeedPage({
   return (
     <main id="main">
       <BackButton />
+      <HomeButton
+        href={searchHomeHref({
+          q,
+          len: firstParam(params.len),
+          pages: firstParam(params.pages),
+        })}
+        label="검색 결과로"
+      />
       <ShortsFeed videos={videos} initialIndex={initialIndex} />
     </main>
   )

@@ -6,7 +6,9 @@ import ShortsFeed from '@/features/feed/ShortsFeed'
 import { ICON_WEIGHT, ListChecks } from '@/components/ui/icons'
 import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
+import { restAt } from '@/features/routines/rest'
+import { recordWorkout } from '@/features/workouts/workouts'
 
 /**
  * 루틴 재생. 검색 피드와 달리 서버에서 영상 목록을 가져오지 않는다 —
@@ -23,10 +25,12 @@ export default function RoutineFeed({
   const routines = useRoutines()
   // 서버 렌더에는 루틴이 없다. 하이드레이션 전에는 "없음"으로 단정하면 안 된다.
   const hydrated = useHydrated()
+  // 주인이 정해지기 전에는 로그인 사용자의 루틴이 아직 보이지 않는다 — "없음" 으로 단정하지 않는다.
+  const ownerResolved = useOwnerResolved()
 
   const routine = routines.find((item) => item.id === routineId)
 
-  if (!hydrated) {
+  if (!hydrated || !ownerResolved) {
     return (
       <div data-feed-root="" className="flex h-dvh items-center justify-center bg-black">
         <div className="skeleton h-3/5 w-[min(90vw,280px)] rounded-2xl" />
@@ -41,7 +45,7 @@ export default function RoutineFeed({
           testId="routine-missing"
           icon={<ListChecks size={22} weight={ICON_WEIGHT} aria-hidden />}
           title={routine ? '이 루틴은 비어 있어요.' : '루틴을 찾을 수 없어요.'}
-          description="루틴은 이 브라우저에만 저장돼요. 다른 기기에서 만든 루틴은 보이지 않아요."
+          description="루틴이 지워졌거나 다른 계정의 루틴이에요."
           actions={
             <Link href="/routines" className={BUTTON_PRIMARY}>
               루틴 보러가기
@@ -59,6 +63,8 @@ export default function RoutineFeed({
       videos={routine.items}
       initialIndex={initialIndex}
       routineName={routine.name}
+      onRoutineComplete={() => recordWorkout(routine)}
+      restFor={(index) => restAt(routine.items, index)}
     />
   )
 }

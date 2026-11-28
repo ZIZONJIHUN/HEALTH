@@ -30,8 +30,11 @@ src/app/               라우팅과 화면 조립만. 로직은 두지 않는다
 
 - **서버 상태는 URL 에 둔다.** 검색어, 길이 필터, 부위 칩 펼침 상태가 전부 `searchParams`
   에서 유도된다. 컴포넌트 상태로 들면 뒤로가기·새로고침·링크 공유에서 풀린다.
-- **영속 상태는 localStorage + `useSyncExternalStore`.** 루틴이 그렇다. 저장 매체를 아는
-  코드는 `features/routines/routines.ts` 안에만 둔다.
+- **영속 상태는 localStorage + `useSyncExternalStore`.** 루틴과 운동 기록이 그렇다. 로컬 저장
+  매체를 아는 코드는 `features/routines/routines.ts`, `features/workouts/workouts.ts` 안에만,
+  서버(Supabase) 입출력은 `features/routines/routineSync.ts` 안에만 둔다.
+- **사용자 데이터에는 service 클라이언트(`src/lib/supabase/service.ts`)를 쓰지 않는다.** RLS 를
+  우회하므로 검색 캐시·예산 전용이다. 루틴·기록은 로그인 사용자의 anon 세션으로만 닿는다.
 - `useState` 는 순수 UI 토글(열림/닫힘, 편집 중)에만 쓴다.
 
 ## 화면

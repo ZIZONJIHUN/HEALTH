@@ -86,6 +86,33 @@ test('뒤로가기로 그리드의 스크롤 위치가 복원된다', async ({ p
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
 })
 
+test('영상을 몇 개 넘긴 뒤에도 뒤로 버튼 한 번에 그리드로 돌아간다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').first().click()
+  await expect(page).toHaveURL(/\/feed/)
+  const before = await page.evaluate(() => history.length)
+
+  // 슬라이드가 바뀔 때 이미 뜬 iframe 의 src 를 바꾸면 iframe 안에서 내비게이션이
+  // 일어나 세션 히스토리가 쌓이고, 뒤로가 페이지 대신 iframe 을 되돌린다.
+  // 다 뜨기 전에 src 가 바뀌면 브라우저가 히스토리를 쌓지 않고 대체한다. 실제
+  // 사용자처럼 영상이 뜰 시간을 두고 넘겨야 재현된다.
+  for (const n of [2, 3, 4]) {
+    await page.waitForTimeout(2000)
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByText(`${n} / 9`)).toBeVisible()
+  }
+  await expect(page.getByTestId('feed-slide').nth(3).locator('iframe')).toHaveAttribute(
+    'src',
+    /autoplay=1/,
+  )
+  // iframe 내비게이션은 비동기로 히스토리에 반영된다. 잠깐 기다렸다 센다.
+  await page.waitForTimeout(1000)
+  expect(await page.evaluate(() => history.length)).toBe(before)
+
+  await page.getByTestId('back-button').click()
+  await expect(page).toHaveURL(/\/\?q=/)
+})
+
 test('결과가 없으면 추천 검색어를 보여준다', async ({ page }) => {
   await page.goto('/?q=없는운동')
 
@@ -261,4 +288,190 @@ test('영상을 보면서 루틴에 담을 수 있다', async ({ page }) => {
   await page.goto('/routines')
   await expect(page.getByRole('heading', { name: '피드에서 담은 루틴' })).toBeVisible()
   await expect(page.getByTestId('routine-item')).toHaveCount(1)
+})
+
+test('검색한 운동이 홈에 최근 검색어로 남는다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await expect(page.getByTestId('video-card').first()).toBeVisible()
+  // 카드는 서버 HTML 로 먼저 보인다. 기록은 하이드레이션 뒤에 남으니 그때까지 기다린다.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('health-shorts:history:v1')))
+    .toContain('스쿼트')
+
+  await page.goto('/')
+  const recent = page.getByTestId('recent-search')
+  await expect(recent).toHaveCount(1)
+  await expect(recent).toHaveText('스쿼트')
+
+  await recent.click()
+  await expect(page).toHaveURL(/\/\?q=%EC%8A%A4%EC%BF%BC%ED%8A%B8/)
+
+  await page.goto('/')
+  await page.getByRole('button', { name: '스쿼트 검색 기록 지우기' }).click()
+  await expect(page.getByTestId('recent-search')).toHaveCount(0)
+})
+
+test('본 영상이 홈에 남고 누르면 다시 재생된다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').nth(2).click()
+  await expect(page).toHaveURL(/\/feed/)
+  await expect(page.getByText('3 / 9')).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('health-shorts:history:v1')))
+    .toContain('"videos":[{')
+
+  await page.goto('/')
+  const recent = page.getByTestId('recent-video')
+  await expect(recent).toHaveCount(1)
+
+  // 다시 틀 때 YouTube 를 부르지 않는다. 저장해 둔 메타데이터로 피드를 만든다.
+  await recent.first().click()
+  await expect(page).toHaveURL(/\/feed\?recent=1&i=0/)
+  await expect(page.getByTestId('feed-slide')).toHaveCount(1)
+})
+
+test('루틴 화면이 로그인 안내를 보여준다', async ({ page }) => {
+  // E2E 는 Supabase 가 꺼져 있어 상태가 늘 local 이다. 비로그인 사용자에게 저장 위치와 다음 행동을 알려야 한다.
+  await page.goto('/routines')
+  const line = page.getByTestId('sync-status')
+  await expect(line).toContainText('이 브라우저에만 저장돼요')
+  await expect(line.getByRole('link', { name: /로그인하면/ })).toHaveAttribute('href', '/account')
+})
+
+test('루틴을 끝내면 이번 주 기록에 남는다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+
+  // 영상 하나를 담은 루틴을 만든다. 하나뿐이라 첫 슬라이드가 곧 마지막 슬라이드다.
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  await page.getByTestId('start-routine').click()
+  await expect(page).toHaveURL(/\/feed\?routine=.+&i=0/)
+
+  await page.getByTestId('finish-workout').click()
+  await expect(page.getByTestId('workout-recorded')).toBeVisible()
+  // 한 재생에서 두 번 기록되지 않는다 — 버튼이 결과 문구로 바뀐다.
+  await expect(page.getByTestId('finish-workout')).toHaveCount(0)
+
+  await page.goto('/routines')
+  await expect(page.getByTestId('workout-summary')).toContainText('연속 1일')
+  await expect(page.getByTestId('workout-summary')).toContainText('이번 달 1회')
+})
+
+test('기록이 없으면 안내 한 줄만 보인다', async ({ page }) => {
+  await page.goto('/routines')
+  await expect(page.getByText('루틴을 끝까지 하면 여기에 기록돼요.')).toBeVisible()
+  await expect(page.getByTestId('workout-summary')).toHaveCount(0)
+})
+
+test('검색 피드에는 운동 완료 버튼이 없다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('video-card').nth(8).click()
+  await expect(page.getByText('9 / 9')).toBeVisible()
+  // 검색 피드는 운동이 아니다. 마지막 슬라이드여도 기록할 것이 없다.
+  await expect(page.getByTestId('finish-workout')).toHaveCount(0)
+})
+
+test('루틴의 운동마다 휴식 시간을 정하고 재생 중 타이머를 쓴다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  // 첫 카드는 모의 서버의 '스쿼트 기본 자세' — 큰 근육 운동이라 추천은 90초다.
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  const picker = page.getByTestId('rest-picker').first()
+  // 추천 표시는 추천값 칩 안에 있다. 담을 때 추천값으로 정해져 그 칩이 켜져 있다.
+  const recommended = picker.getByRole('button', { name: '1분 30초' })
+  await expect(recommended).toContainText('추천')
+  await expect(recommended).toHaveAttribute('aria-pressed', 'true')
+  await expect(picker.getByRole('button', { name: '60초', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+
+  await picker.getByRole('button', { name: '60초', exact: true }).click()
+  await expect(picker.getByRole('button', { name: '60초', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await picker.getByRole('button', { name: '1분 30초' }).click()
+  await picker.getByRole('button', { name: '휴식 10초 늘리기' }).click()
+  await expect(picker).toContainText('1분 40초')
+  // 프리셋이 아닌 값이면 켜진 칩이 없다.
+  await expect(picker.getByRole('button', { name: '1분 30초' })).toHaveAttribute('aria-pressed', 'false')
+  await page.reload()
+  await expect(page.getByTestId('rest-picker').first()).toContainText('1분 40초') // 저장됨
+
+  await page.getByTestId('start-routine').click()
+  await expect(page.getByTestId('start-rest')).toContainText('1분 40초')
+  await page.getByTestId('start-rest').click()
+  await expect(page.getByTestId('rest-panel')).toContainText(/1:(40|39|38)/)
+  await page.getByRole('button', { name: '+10초' }).click()
+  await expect(page.getByTestId('rest-panel')).toContainText(/1:(50|49|48|47)/)
+  await page.getByRole('button', { name: '건너뛰기' }).click()
+  await expect(page.getByTestId('rest-panel')).toHaveCount(0)
+  // 재생 중 조절은 저장하지 않는다.
+  await expect(page.getByTestId('start-rest')).toContainText('1분 40초')
+})
+
+test('휴식이 끝나면 휴식 끝을 잠깐 보여주고 닫힌다', async ({ page }) => {
+  await page.clock.install()
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').first().click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('하체 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+
+  await page.goto('/routines')
+  const picker = page.getByTestId('rest-picker').first()
+  await picker.getByRole('button', { name: '30초', exact: true }).click()
+  await page.getByTestId('start-routine').click()
+  await page.getByTestId('start-rest').click()
+  await expect(page.getByTestId('rest-panel')).toContainText('0:30')
+
+  await page.clock.runFor(31_000)
+  await expect(page.getByTestId('rest-panel')).toContainText('휴식 끝')
+  await page.clock.runFor(2_500)
+  await expect(page.getByTestId('rest-panel')).toHaveCount(0)
+})
+
+test('검색 피드에는 휴식 버튼이 없다', async ({ page }) => {
+  await page.goto('/feed?q=스쿼트')
+  await expect(page.getByTestId('feed-slide').first()).toBeVisible()
+  await expect(page.getByTestId('start-rest')).toHaveCount(0)
+})
+
+test('재생 중 다른 탭에서 루틴이 줄어도 재생 화면이 살아 있다', async ({ page }) => {
+  await page.goto('/?q=스쿼트')
+  await page.getByTestId('add-to-routine').nth(0).click()
+  await page.getByRole('button', { name: '새 루틴 만들기' }).click()
+  await page.getByLabel('새 루틴 이름').fill('줄어드는 루틴')
+  await page.getByRole('button', { name: '만들고 담기' }).click()
+  await page.getByTestId('add-to-routine').nth(1).click()
+  await page.getByRole('button', { name: /^줄어드는 루틴/ }).click()
+
+  // 마지막 운동에서 재생을 시작한다.
+  const routineId = await page.evaluate(
+    () => JSON.parse(window.localStorage.getItem('health-shorts:routines:v2')!)[0].id as string,
+  )
+  await page.goto(`/feed?routine=${routineId}&i=1`)
+  await expect(page.getByText('2 / 2')).toBeVisible()
+
+  // 다른 탭이 마지막 운동을 뺐다. storage 이벤트는 다른 탭에서만 오므로 직접 쏜다.
+  await page.evaluate(() => {
+    const key = 'health-shorts:routines:v2'
+    const routines = JSON.parse(window.localStorage.getItem(key)!)
+    routines[0].items = routines[0].items.slice(0, 1)
+    window.localStorage.setItem(key, JSON.stringify(routines))
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+  })
+
+  await expect(page.getByText('1 / 1')).toBeVisible()
+  await expect(page.getByTestId('start-rest')).toBeVisible()
+  await expect(page.getByTestId('finish-workout')).toBeVisible()
 })

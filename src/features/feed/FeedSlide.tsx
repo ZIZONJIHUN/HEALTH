@@ -21,6 +21,11 @@ import type { ShortVideo } from '@/lib/types'
  *
  * loop 와 enablejsapi 를 슬라이드마다 다르게 주면 안 된다. 그러면 슬라이드가
  * 활성화될 때 src 가 바뀌어 iframe 이 통째로 다시 뜬다.
+ *
+ * autoplay 만은 바뀔 수밖에 없는데, 이미 뜬 iframe 의 src 를 바꾸면 iframe 안에서
+ * 내비게이션이 일어나 **브라우저 히스토리에 항목이 쌓인다.** 한 칸 넘길 때마다 두 개씩
+ * 쌓여서 뒤로 버튼이 페이지 대신 iframe 을 되돌렸다. 그래서 autoplay 를 key 로 줘서
+ * 새 iframe 을 만든다. 새 iframe 의 첫 로드는 히스토리에 남지 않는다.
  */
 export default function FeedSlide({
   video,
@@ -60,6 +65,7 @@ export default function FeedSlide({
       >
         {active ? (
           <iframe
+            key={autoplay ? 'playing' : 'idle'}
             ref={iframeRef}
             src={buildEmbedUrl(video.id, { autoplay, loop: false, enableJsApi: true })}
             title={video.title}

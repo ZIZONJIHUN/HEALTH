@@ -2,8 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ICON_WEIGHT, Plus } from '@/components/ui/icons'
-import { addVideoToRoutine, createRoutine } from '@/features/routines/routines'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { addVideoToRoutine, createRoutine, LIMITS } from '@/features/routines/routines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
 import type { ShortVideo } from '@/lib/types'
 
 /**
@@ -31,10 +31,13 @@ export default function AddToRoutineButton({
   // 메뉴와 실패 안내가 같은 방향으로 열려야 한다.
   const openSide = placement === 'above' ? 'bottom-9' : 'top-9'
   const routines = useRoutines()
+  // 주인이 정해지기 전에 담으면 로그인 사용자의 것이 손님 루틴으로 만들어진다. 그동안은 막는다.
+  const ownerResolved = useOwnerResolved()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
-  const [failed, setFailed] = useState(false)
+  // 담기지 않은 이유. null 이면 안내를 띄우지 않는다.
+  const [failed, setFailed] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
 
@@ -68,7 +71,7 @@ export default function AddToRoutineButton({
   useEffect(() => {
     if (!failed) return
     // 실패 안내는 성공 피드백보다 오래 띄운다. 읽고 무슨 일인지 이해할 시간이 필요하다.
-    const timer = setTimeout(() => setFailed(false), 4000)
+    const timer = setTimeout(() => setFailed(null), 4000)
     return () => clearTimeout(timer)
   }, [failed])
 
@@ -76,14 +79,32 @@ export default function AddToRoutineButton({
     // 저장 실패(용량 초과, 시크릿 모드)를 삼키면 화면에는 담긴 것처럼 보이고
     // 새로고침하면 사라진다. 사용자는 이유를 알 수 없다.
     const result = addVideoToRoutine(routineId, video)
-    setFailed(result === 'failed')
-    setJustAdded(result !== 'failed')
+    setFailed(
+      result === 'failed'
+        ? '저장하지 못했어요. 브라우저 저장공간이 가득 찼을 수 있어요.'
+        : result === 'full'
+          ? `한 루틴에는 ${LIMITS.items}개까지 담을 수 있어요`
+          : null,
+    )
+    setJustAdded(result === 'added' || result === 'duplicate')
+    close()
+  }
+
+  function close() {
     setOpen(false)
     setCreating(false)
   }
 
   function createAndAdd(name: string) {
-    add(createRoutine(name).id)
+    const routine = createRoutine(name)
+    if (!routine) {
+      // 상한은 실패 안내와 같은 자리에 같은 시간 동안 띄운다. 이유가 다를 뿐 "담기지 않았다"는 같다.
+      setFailed(`루틴은 ${LIMITS.routines}개까지 만들 수 있어요`)
+      setJustAdded(false)
+      close()
+      return
+    }
+    add(routine.id)
   }
 
   return (
@@ -95,8 +116,9 @@ export default function AddToRoutineButton({
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        disabled={!ownerResolved}
         onClick={() => setOpen((value) => !value)}
-        className={`flex h-8 w-8 items-center justify-center rounded-full border backdrop-blur-md ${
+        className={`flex h-8 w-8 items-center justify-center rounded-full border backdrop-blur-md disabled:opacity-40 ${
           savedIn.length
             ? 'border-accent-dim bg-accent text-accent-fg'
             : 'border-white/15 bg-black/55 text-text hover:border-accent-dim hover:text-accent'
@@ -173,7 +195,7 @@ export default function AddToRoutineButton({
           data-testid="add-failed"
           className={`absolute ${openSide} right-0 z-30 w-44 rounded-lg border border-danger/35 bg-danger/15 px-2.5 py-2 text-[11px] leading-relaxed text-text shadow-pop`}
         >
-          저장하지 못했어요. 브라우저 저장공간이 가득 찼을 수 있어요.
+          {failed}
         </p>
       ) : null}
     </div>
@@ -200,6 +222,7 @@ function NewRoutineForm({
           if (event.key === 'Enter') onSubmit(name || '내 루틴')
           if (event.key === 'Escape') onCancel()
         }}
+        maxLength={LIMITS.nameLength}
         placeholder="예: 가슴 루틴"
         aria-label="새 루틴 이름"
         className="h-9 w-full rounded-lg border border-border bg-surface2 px-2.5 text-[13px] text-text placeholder:text-dim focus:border-accent-dim focus:outline-none"

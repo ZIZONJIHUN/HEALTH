@@ -21,24 +21,28 @@ import { formatDuration } from '@/lib/duration'
 import { particle } from '@/lib/korean'
 import {
   deleteRoutine,
+  LIMITS,
   moveVideoInRoutine,
   removeVideoFromRoutine,
   renameRoutine,
   restoreRoutine,
   type Routine,
 } from '@/features/routines/routines'
+import RestPicker from '@/features/routines/RestPicker'
 import { useHydrated } from '@/lib/useHydrated'
-import { useRoutines } from '@/features/routines/useRoutines'
+import { useOwnerResolved, useRoutines } from '@/features/routines/useRoutines'
 
 /** 실행 취소를 띄워 두는 시간. 짧으면 놓치고, 길면 화면에 계속 걸리적거린다. */
 const UNDO_WINDOW_MS = 8000
 
-type Deleted = { routine: Routine; index: number }
+type Deleted = { routine: Routine; index: number; owner: string | null }
 
 export default function RoutineList() {
   const routines = useRoutines()
   // 서버 렌더에는 루틴이 없다. 하이드레이션 전에 "없음" 화면을 그리면 깜빡인다.
   const hydrated = useHydrated()
+  // 로그인 사용자도 주인이 정해지기 전에는 손님 목록이 보인다. 그 순간도 불러오는 중으로 다룬다.
+  const ownerResolved = useOwnerResolved()
   const [deleted, setDeleted] = useState<Deleted | null>(null)
 
   useEffect(() => {
@@ -47,7 +51,7 @@ export default function RoutineList() {
     return () => clearTimeout(timer)
   }, [deleted])
 
-  if (!hydrated) {
+  if (!hydrated || !ownerResolved) {
     return (
       <div role="status" aria-label="루틴 불러오는 중" className="space-y-4">
         <div className="skeleton h-40 rounded-2xl" />
@@ -60,7 +64,9 @@ export default function RoutineList() {
     <UndoBar
       name={deleted.routine.name}
       onUndo={() => {
-        restoreRoutine(deleted.routine, deleted.index)
+        // 그사이 주인이 바뀌었으면 되돌리기를 거부한다(false). 안내 없이 닫기만 한다 —
+        // 지금 화면에는 그 루틴이 원래 없던 것이다.
+        restoreRoutine(deleted.routine, deleted.index, deleted.owner)
         setDeleted(null)
       }}
       onDismiss={() => setDeleted(null)}
@@ -204,6 +210,7 @@ function RoutineCard({
                 }
               }}
               aria-label="루틴 이름"
+              maxLength={LIMITS.nameLength}
               className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface2 px-3 text-sm text-text focus:border-accent-dim focus:outline-none"
             />
             <button
@@ -243,55 +250,61 @@ function RoutineCard({
             <li
               key={item.id}
               data-testid="routine-item"
-              className="flex items-center gap-3 rounded-xl border border-border bg-surface px-2.5 py-2"
+              className="rounded-xl border border-border bg-surface px-2.5 py-2"
             >
-              <span className="tabular w-5 shrink-0 text-center text-xs text-dim">{index + 1}</span>
+              <div className="flex items-center gap-3">
+                <span className="tabular w-5 shrink-0 text-center text-xs text-dim">{index + 1}</span>
 
-              <Link
-                href={`/feed?routine=${routine.id}&i=${index}`}
-                className="group flex min-w-0 flex-1 items-center gap-3"
-              >
-                <span className="relative h-12 w-9 shrink-0 overflow-hidden rounded-md bg-surface2">
-                  <Image
-                    src={item.thumbnailUrl}
-                    alt=""
-                    fill
-                    sizes="36px"
-                    className="object-cover transition-transform duration-200 group-hover:scale-105"
-                  />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="line-clamp-1 text-[13px] font-medium text-text group-hover:text-accent">
-                    {item.title}
+                <Link
+                  href={`/feed?routine=${routine.id}&i=${index}`}
+                  className="group flex min-w-0 flex-1 items-center gap-3"
+                >
+                  <span className="relative h-12 w-9 shrink-0 overflow-hidden rounded-md bg-surface2">
+                    <Image
+                      src={item.thumbnailUrl}
+                      alt=""
+                      fill
+                      sizes="36px"
+                      className="object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
                   </span>
-                  <span className="tabular mt-0.5 block text-[11px] text-dim">
-                    {formatDuration(item.durationSeconds)}
+                  <span className="min-w-0 flex-1">
+                    <span className="line-clamp-1 text-[13px] font-medium text-text group-hover:text-accent">
+                      {item.title}
+                    </span>
+                    <span className="tabular mt-0.5 block text-[11px] text-dim">
+                      {formatDuration(item.durationSeconds)}
+                    </span>
                   </span>
-                </span>
-              </Link>
+                </Link>
 
-              <div className="flex shrink-0 items-center">
-                <IconButton
-                  label={`${item.title} 위로`}
-                  disabled={index === 0}
-                  onClick={() => moveVideoInRoutine(routine.id, item.id, -1)}
-                >
-                  <CaretUp size={13} weight={ICON_WEIGHT} aria-hidden />
-                </IconButton>
-                <IconButton
-                  label={`${item.title} 아래로`}
-                  disabled={index === routine.items.length - 1}
-                  onClick={() => moveVideoInRoutine(routine.id, item.id, 1)}
-                >
-                  <CaretDown size={13} weight={ICON_WEIGHT} aria-hidden />
-                </IconButton>
-                <IconButton
-                  label={`${item.title} 빼기`}
-                  onClick={() => removeVideoFromRoutine(routine.id, item.id)}
-                  danger
-                >
-                  <Trash size={13} weight={ICON_WEIGHT} aria-hidden />
-                </IconButton>
+                <div className="flex shrink-0 items-center">
+                  <IconButton
+                    label={`${item.title} 위로`}
+                    disabled={index === 0}
+                    onClick={() => moveVideoInRoutine(routine.id, item.id, -1)}
+                  >
+                    <CaretUp size={13} weight={ICON_WEIGHT} aria-hidden />
+                  </IconButton>
+                  <IconButton
+                    label={`${item.title} 아래로`}
+                    disabled={index === routine.items.length - 1}
+                    onClick={() => moveVideoInRoutine(routine.id, item.id, 1)}
+                  >
+                    <CaretDown size={13} weight={ICON_WEIGHT} aria-hidden />
+                  </IconButton>
+                  <IconButton
+                    label={`${item.title} 빼기`}
+                    onClick={() => removeVideoFromRoutine(routine.id, item.id)}
+                    danger
+                  >
+                    <Trash size={13} weight={ICON_WEIGHT} aria-hidden />
+                  </IconButton>
+                </div>
+              </div>
+              {/* 번호 칸(w-5) + 간격만큼 들여서 제목 줄과 왼쪽을 맞춘다. */}
+              <div className="mt-2 pl-8">
+                <RestPicker routineId={routine.id} item={item} />
               </div>
             </li>
           ))}

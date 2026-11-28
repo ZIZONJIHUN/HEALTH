@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import FeedSlide from '@/features/feed/FeedSlide'
+import { recordView } from '@/features/history/history'
 import { iconButtonClass } from '@/components/ui/IconButton'
+import { BUTTON_PRIMARY } from '@/components/ui/Button'
 import { FEED_PLAYER_BOX } from '@/features/feed/feedPlayerBox'
+import { autoCompletesOnEnd } from '@/features/feed/routineEnd'
 import { ArrowRight, CaretDown, CaretUp, ICON_WEIGHT, X } from '@/components/ui/icons'
+import { RestPanel, StartRestButton, useRestRun } from '@/features/routines/RestTimerControls'
 import type { ShortVideo } from '@/lib/types'
 
 /** 현재 슬라이드 기준 앞뒤 몇 개까지 iframe을 마운트할지. */
@@ -13,21 +17,71 @@ const MOUNT_WINDOW = 1
 /** 영상이 끝났을 때 "다음으로 해보세요"에 몇 개까지 보여줄지. */
 const NEXT_UP_COUNT = 3
 
+export type RoutineCompleteResult = 'recorded' | 'limit' | 'failed'
+
+const COMPLETE_MESSAGES: Record<RoutineCompleteResult, string> = {
+  recorded: '오늘 운동을 기록했어요 🔥',
+  limit: '오늘은 더 기록할 수 없어요',
+  failed: '기록을 저장하지 못했어요',
+}
+
 export default function ShortsFeed({
   videos,
   initialIndex,
   routineName,
+  recordViews = true,
+  onRoutineComplete,
+  restFor,
 }: {
   videos: ShortVideo[]
   initialIndex: number
   /** 있으면 루틴 재생이다. 반복을 끄고 끝나면 다음 운동을 권한다. */
   routineName?: string
+  /** 보고 있는 영상을 "최근 본 영상"에 남길지. 최근 본 영상을 다시 볼 때만 끈다. */
+  recordViews?: boolean
+  /** 루틴을 끝까지 했을 때 한 번 부른다. 기록은 부르는 쪽(RoutineFeed)이 남긴다. */
+  onRoutineComplete?: () => RoutineCompleteResult
+  /**
+   * 루틴 재생에서 index 번째 운동의 휴식 시간(초). 있으면 휴식 타이머를 그린다.
+   * videos 를 RoutineItem 으로 넓히지 않고 함수로 받는 이유: 검색·최근 피드는 휴식 개념이
+   * 없어서, 타입을 넓히면 그쪽이 의미 없는 값을 채워 넘겨야 한다.
+   */
+  restFor?: (index: number) => number
 }) {
-  const [activeIndex, setActiveIndex] = useState(initialIndex)
+  const [observedIndex, setActiveIndex] = useState(initialIndex)
   const [endedIndex, setEndedIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<Array<HTMLDivElement | null>>([])
   const routineMode = routineName != null
+  const lastIndex = videos.length - 1
+  // 재생 중 목록이 줄면(다른 탭에서 루틴 운동을 뺐다) 보던 자리가 범위를 벗어난다. 상태를 고치지
+  // 않고 렌더에서 끝으로 당긴다 — 관찰자가 다음 교차에서 실제 자리로 다시 맞춘다.
+  const activeIndex = Math.min(observedIndex, Math.max(lastIndex, 0))
+
+  /**
+   * 한 재생에서 기록은 한 번뿐이다. 끝 감지와 "운동 완료" 버튼 중 먼저 온 쪽이 기록하고,
+   * 결과가 'limit'·'failed' 여도 다시 시도하지 않는다 — 버튼을 되살리면 연타로 같은 운동이
+   * 여러 번 쌓인다. 상태가 아니라 ref 로 막는 이유: 같은 틱에 두 경로가 겹치면 상태는 아직
+   * 갱신 전이라 둘 다 통과한다.
+   */
+  const completedRef = useRef(false)
+  const [completeResult, setCompleteResult] = useState<RoutineCompleteResult | null>(null)
+
+  // 휴식은 슬라이드를 넘겨도 이어져야 해서 슬라이드가 아니라 여기서 든다.
+  const rest = useRestRun()
+
+  // 부르는 쪽이 인라인 화살표를 넘겨도 종료 감지 구독(handleEnded)이 흔들리지 않게 최신 값만 ref 로 든다.
+  const onCompleteRef = useRef(onRoutineComplete)
+  useEffect(() => {
+    onCompleteRef.current = onRoutineComplete
+  }, [onRoutineComplete])
+
+  const completeRoutine = useCallback(() => {
+    const record = onCompleteRef.current
+    if (!record || completedRef.current) return
+    completedRef.current = true
+    setCompleteResult(record())
+  }, [])
 
   // 그리드에서 누른 영상으로 바로 이동한다.
   useEffect(() => {
@@ -56,8 +110,22 @@ export default function ShortsFeed({
     return () => observer.disconnect()
   }, [videos.length])
 
+  const activeVideo = videos[activeIndex]
+  useEffect(() => {
+    if (recordViews && activeVideo) recordView(activeVideo)
+  }, [recordViews, activeVideo])
+
   // FeedSlide 로 내려가는 참조가 렌더마다 바뀌면 종료 감지 구독이 계속 끊겼다 붙는다.
-  const handleEnded = useCallback((index: number) => setEndedIndex(index), [])
+  const handleEnded = useCallback(
+    (index: number) => {
+      setEndedIndex(index)
+      // 처음부터 재생한 루틴의 마지막 운동이 끝까지 재생됐다 = 루틴을 끝냈다. 버튼 없이도 기록한다.
+      if (autoCompletesOnEnd({ routineMode, startIndex: initialIndex, index, lastIndex })) {
+        completeRoutine()
+      }
+    },
+    [routineMode, initialIndex, lastIndex, completeRoutine],
+  )
 
   const goTo = useCallback(
     (index: number) => {
@@ -104,6 +172,13 @@ export default function ShortsFeed({
 
   const atFirst = activeIndex <= 0
   const atLast = activeIndex >= videos.length - 1
+  // 끝 감지는 실패할 수 있다(임베드가 신호를 안 보내는 환경). 그래서 루틴의 마지막 슬라이드에는
+  // 버튼을 항상 둔다. 검색·최근 피드는 운동이 아니므로 기록할 것이 없다.
+  const showFinish = routineMode && onRoutineComplete != null && activeIndex === lastIndex
+  // 휴식은 사용자가 직접 시작한다. 영상 끝에 자동으로 걸면 한 세트 더 하려던 사람을 막는다.
+  const restSeconds = routineMode && restFor ? restFor(activeIndex) : null
+  const showRoutineRow = showFinish || restSeconds != null
+  const completeMessage = completeResult ? COMPLETE_MESSAGES[completeResult] : null
   const nextUp = videos.slice(activeIndex + 1, activeIndex + 1 + NEXT_UP_COUNT)
 
   return (
@@ -168,10 +243,59 @@ export default function ShortsFeed({
         </div>
       </div>
 
+      {/* 제목·담기 버튼 줄(FeedSlide 하단 오버레이) 바로 위에 따로 한 줄을 둔다. 그 줄을 차지하면
+          제목이 밀리고, 이 줄은 휴식 타이머 같은 루틴 전용 버튼이 옆에 더 붙을 자리다. */}
+      {showRoutineRow ? (
+        <div className="pointer-events-none absolute inset-0 z-40 flex justify-center">
+          <div className={`relative h-full w-full ${FEED_PLAYER_BOX}`}>
+            <div
+              className="absolute inset-x-0 flex flex-col gap-2 px-4"
+              style={{ bottom: 'calc(max(1.5rem, env(safe-area-inset-bottom)) + 4.5rem)' }}
+            >
+              {rest.run ? (
+                <RestPanel
+                  run={rest.run}
+                  finished={rest.finished}
+                  onAdjust={rest.adjust}
+                  onSkip={rest.skip}
+                  onElapsed={rest.elapse}
+                />
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {restSeconds != null ? (
+                  <StartRestButton seconds={restSeconds} onStart={() => rest.start(restSeconds)} />
+                ) : null}
+                {!showFinish ? null : completeMessage ? (
+                  <p
+                    role="status"
+                    data-testid={
+                      completeResult === 'recorded' ? 'workout-recorded' : 'workout-not-recorded'
+                    }
+                    className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-accent backdrop-blur-sm"
+                  >
+                    {completeMessage}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="finish-workout"
+                    onClick={completeRoutine}
+                    className={`pointer-events-auto ${BUTTON_PRIMARY}`}
+                  >
+                    운동 완료
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {endedIndex === activeIndex ? (
         <NextUpPanel
           nextUp={nextUp}
           finishedLabel={routineMode ? '루틴을 끝냈어요' : '마지막 영상이었어요'}
+          finishedNote={completeMessage}
           startIndex={activeIndex + 1}
           onPick={goTo}
           onDismiss={() => setEndedIndex(null)}
@@ -191,12 +315,15 @@ function NextUpPanel({
   nextUp,
   startIndex,
   finishedLabel,
+  finishedNote,
   onPick,
   onDismiss,
 }: {
   nextUp: ShortVideo[]
   startIndex: number
   finishedLabel: string
+  /** 루틴을 끝냈을 때 기록 결과. 검색 피드에서는 없다. */
+  finishedNote?: string | null
   onPick: (index: number) => void
   onDismiss: () => void
 }) {
@@ -221,7 +348,12 @@ function NextUpPanel({
       </div>
 
       {nextUp.length === 0 ? (
-        <p className="mt-2 text-xs text-muted">수고했어요. 위로 넘겨 다시 볼 수 있어요.</p>
+        <>
+          {finishedNote ? (
+            <p className="mt-2 text-sm font-semibold text-accent">{finishedNote}</p>
+          ) : null}
+          <p className="mt-2 text-xs text-muted">수고했어요. 위로 넘겨 다시 볼 수 있어요.</p>
+        </>
       ) : (
         <ul className="mt-3 space-y-1.5">
           {nextUp.map((video, offset) => (
